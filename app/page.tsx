@@ -52,7 +52,7 @@ export default function Home() {
   }
 
   return (
-    <main className="relative w-full h-dvh overflow-hidden bg-stone-100">
+    <main className="fixed inset-0 overflow-hidden bg-stone-100">
       {/* Game layer — always rendered so the map preloads on start screen */}
       {gamePhase !== 'start' && (
         <GameWrapper

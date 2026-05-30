@@ -3,6 +3,20 @@ STRATA — CHANGELOG
 Reverse-chronological. Each entry covers one logical change session.
 
 
+[2026-05-30] HUD redesign + landscape full-bleed
+--------------------------------------------------
+CHANGED  app/page.tsx
+         - <main> position: relative w-full h-dvh → fixed inset-0
+           Eliminates white bars in iPhone landscape by anchoring the game
+           root directly to the display viewport (not a positioned ancestor)
+CHANGED  components/HUD.tsx — full redesign: vertical card → horizontal pill
+         - Layout: dots on left · hairline divider · timer on right
+         - Pill shape (rounded-full) instead of rounded-xl card
+         - Timer: 15px tabular-nums, Geist font; dots: 5px circles
+         - More compact vertically (better for landscape), clearer visually
+         - Urgent state still turns dots + divider + timer red
+
+
 [2026-05-30] Mobile layout fixes
 ----------------------------------
 CHANGED  app/layout.tsx
