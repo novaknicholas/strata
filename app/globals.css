@@ -29,8 +29,9 @@ body {
   Nudge the compact attribution "i" on the main satellite map so it sits
   to the right of the scale bar (which spans left: 16–184px, bottom: 20–53px).
   The logo is already moved to bottom-right via logoPosition in GameMap.tsx.
+  Safe-area offsets keep it clear of the iPhone home indicator / notch.
 */
 .game-map .mapboxgl-ctrl-bottom-left {
-  left: 192px;
-  bottom: 14px;
+  left:   calc(192px + env(safe-area-inset-left, 0px));
+  bottom: calc(14px  + env(safe-area-inset-bottom, 0px));
 }

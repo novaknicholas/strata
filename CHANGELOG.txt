@@ -3,6 +3,37 @@ STRATA — CHANGELOG
 Reverse-chronological. Each entry covers one logical change session.
 
 
+[2026-05-30] Mobile layout fixes
+----------------------------------
+CHANGED  app/layout.tsx
+         - Added Viewport export with viewportFit: 'cover' — required for
+           env(safe-area-inset-*) to return non-zero values on iPhone
+         - html + body classes: h-full → h-dvh so height tracks browser
+           chrome dynamically (no white strip when iOS toolbar shows/hides)
+CHANGED  app/page.tsx
+         - <main> class: h-full → h-dvh (explicit, matches layout chain)
+CHANGED  components/GameMap.tsx
+         - Map container: width:'100vw' height:'100vh' → width/height:'100%'
+           (relies on positioned-parent sizing which is now correctly 100dvh)
+CHANGED  components/MiniMap.tsx
+         - SIZES_MOBILE  { small:120×80,  expanded:240×180 }
+         - SIZES_DESKTOP { small:180×120, expanded:540×400 }
+         - Added isMobile state via window resize listener (breakpoint 640px);
+           switches SIZES on orientation change as well
+         - Positioning: removed bottom-4/right-4 Tailwind classes; now inline
+           style bottom/right using calc(1rem + env(safe-area-inset-*, 0px))
+           so minimap clears home bar and rounded corners on every iPhone
+         - Header label "Place your guess" hidden on mobile (icon-only expand
+           button centred instead) to avoid overflow at 120px panel width
+CHANGED  components/HUD.tsx
+         - top-4 replaced with inline style top: calc(1rem + env(safe-area-inset-top))
+           so timer clears the Dynamic Island / notch
+CHANGED  components/ScaleBar.tsx
+         - bottom/left now use calc(20/16px + env(safe-area-inset-bottom/left))
+CHANGED  app/globals.css
+         - Attribution control left/bottom updated with matching safe-area calcs
+
+
 [2026-05-29] Start screen + difficulty + polish
 -------------------------------------------------
 ADDED    components/StartScreen.tsx

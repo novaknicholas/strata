@@ -162,7 +162,7 @@ export default function GameMap({
     <div
       ref={containerRef}
       className="game-map"
-      style={{ position: 'absolute', inset: 0, width: '100vw', height: '100vh' }}
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
     />
   )
 }

@@ -18,10 +18,9 @@ interface MiniMapProps {
   showResult?: ResultData   // draws line + target pin, fits bounds
 }
 
-const SIZES = {
-  small:    { w: 300, h: 210 },
-  expanded: { w: 540, h: 400 },
-} as const
+// Sizes in px: { w: panel width, h: map area height (excl. header + button) }
+const SIZES_MOBILE  = { small: { w: 120, h: 80  }, expanded: { w: 240, h: 180 } }
+const SIZES_DESKTOP = { small: { w: 180, h: 120 }, expanded: { w: 540, h: 400 } }
 
 export default function MiniMap({ onGuess, onSubmit, disabled = false, showResult }: MiniMapProps) {
   const panelRef      = useRef<HTMLDivElement>(null)
@@ -31,8 +30,17 @@ export default function MiniMap({ onGuess, onSubmit, disabled = false, showResul
   const onGuessRef    = useRef(onGuess)
   const disabledRef   = useRef(disabled)
   const onSubmitRef   = useRef(onSubmit)
-  const [size, setSize]   = useState<'small' | 'expanded'>('small')
-  const [hasPin, setHasPin] = useState(false)
+  const [size, setSize]       = useState<'small' | 'expanded'>('small')
+  const [hasPin, setHasPin]   = useState(false)
+  const [isMobile, setIsMobile] = useState(false)
+
+  // Detect mobile breakpoint; update on resize (handles orientation changes too)
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 640)
+    check()
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
 
   useEffect(() => { onGuessRef.current  = onGuess  }, [onGuess])
   useEffect(() => { disabledRef.current = disabled }, [disabled])
@@ -152,6 +160,7 @@ export default function MiniMap({ onGuess, onSubmit, disabled = false, showResul
     }
   }, [showResult])
 
+  const SIZES    = isMobile ? SIZES_MOBILE : SIZES_DESKTOP
   const { w, h } = SIZES[size]
   // Button is always reserved (48 px) so the panel height stays stable
   const BUTTON_H = 48
@@ -159,17 +168,26 @@ export default function MiniMap({ onGuess, onSubmit, disabled = false, showResul
   return (
     <div
       ref={panelRef}
-      className="absolute bottom-4 right-4 flex flex-col rounded-xl overflow-hidden shadow-2xl border border-stone-200 bg-white transition-[width,height] duration-300 ease-in-out"
-      style={{ width: w, height: h + 36 + BUTTON_H }}
+      className="absolute flex flex-col rounded-xl overflow-hidden shadow-2xl border border-stone-200 bg-white transition-[width,height] duration-300 ease-in-out"
+      style={{
+        width:  w,
+        height: h + 36 + BUTTON_H,
+        // Safe-area-aware positioning — keeps minimap clear of iPhone notch/home bar
+        bottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))',
+        right:  'calc(1rem + env(safe-area-inset-right, 0px))',
+      }}
     >
       {/* Header */}
       <div className="flex items-center justify-between px-3 shrink-0 h-9 bg-white border-b border-stone-100">
-        <span className="text-[11px] font-semibold text-stone-400 uppercase tracking-widest select-none">
-          Place your guess
-        </span>
+        {/* Hide text label on mobile to save space; icon-only is clear enough */}
+        {!isMobile && (
+          <span className="text-[11px] font-semibold text-stone-400 uppercase tracking-widest select-none">
+            Place your guess
+          </span>
+        )}
         <button
           onClick={() => setSize(s => s === 'small' ? 'expanded' : 'small')}
-          className="flex items-center gap-1 text-[11px] font-medium text-stone-400 hover:text-stone-700 transition-colors select-none"
+          className={`flex items-center gap-1 text-[11px] font-medium text-stone-400 hover:text-stone-700 transition-colors select-none ${isMobile ? 'mx-auto' : ''}`}
           aria-label={size === 'small' ? 'Expand minimap' : 'Collapse minimap'}
         >
           {size === 'small' ? (
@@ -177,14 +195,14 @@ export default function MiniMap({ onGuess, onSubmit, disabled = false, showResul
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
                 <path d="M7 1h4v4M1 7v4h4M11 1L6.5 5.5M1 11l4.5-4.5"/>
               </svg>
-              expand
+              {!isMobile && 'expand'}
             </>
           ) : (
             <>
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
                 <path d="M10 5H6V1M2 7v4h4M6 6L11 1M1 11l5-5"/>
               </svg>
-              shrink
+              {!isMobile && 'shrink'}
             </>
           )}
         </button>

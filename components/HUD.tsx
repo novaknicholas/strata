@@ -13,7 +13,10 @@ export default function HUD({ timeLeft, phase, round, totalRounds }: HUDProps) {
   const urgent = timeLeft <= 10 && phase === 'playing'
 
   return (
-    <div className="absolute top-4 left-1/2 -translate-x-1/2 pointer-events-none select-none z-30">
+    <div
+      className="absolute left-1/2 -translate-x-1/2 pointer-events-none select-none z-30"
+      style={{ top: 'calc(1rem + env(safe-area-inset-top, 0px))' }}
+    >
       <div
         className={`
           flex flex-col items-center gap-2 px-5 pt-2.5 pb-3 rounded-xl shadow-lg border

@@ -45,7 +45,11 @@ export default function ScaleBar({ map }: ScaleBarProps) {
   return (
     <div
       className="absolute pointer-events-none select-none"
-      style={{ bottom: 20, left: 16, zIndex: 10 }}
+      style={{
+        bottom: 'calc(20px + env(safe-area-inset-bottom, 0px))',
+        left:   'calc(16px + env(safe-area-inset-left, 0px))',
+        zIndex: 10,
+      }}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
 
