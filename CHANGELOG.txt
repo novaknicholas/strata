@@ -1,0 +1,233 @@
+STRATA — CHANGELOG
+==================
+Reverse-chronological. Each entry covers one logical change session.
+
+
+[2026-05-29] Start screen + difficulty + polish
+-------------------------------------------------
+ADDED    components/StartScreen.tsx
+         - Full-screen dark intro: title "Where in the world?", tagline,
+           difficulty selector (Explorer 30s / Navigator 20s / Expert 10s),
+           Start button, personal best if available
+         - Subtle SVG grid texture for depth without imagery
+         - Default difficulty: Navigator (20s) — matches previous gameplay
+         - Returning to start screen after Play Again lets player switch mode
+ADDED    lib/types.ts → difficulty awareness: DURATION map in page.tsx
+CHANGED  app/page.tsx
+         - Added GamePhase state: 'start' | 'playing' | 'summary'
+         - Passes gameDuration to GameWrapper and SummaryOverlay
+         - handlePlayAgain now returns to 'start' (not immediately into a new game)
+CHANGED  components/GameWrapper.tsx
+         - GAME_DURATION removed as module constant; now received as gameDuration prop
+         - All timer and scoring logic uses the prop value, so difficulty is live
+CHANGED  components/SummaryOverlay.tsx
+         - Receives gameDuration, derives difficulty label for share text
+         - Share text includes mode: "Strata [Expert] — Excellent · 22,150 / 30,000"
+         - Fixed bar animation bug: bars start at width 0% and transition to target
+           (added barsAnimated state with 60ms deferred trigger)
+         - Added personal best tracking via localStorage (key: strata_best_score)
+         - "↑ New best" banner with previous score when beaten
+         - "Best: X" shown when current game didn't beat it
+         - Added Share button: copies formatted result text to clipboard,
+           shows "Copied!" confirmation for 2 s, cleans up timeout on unmount
+CHANGED  components/GameWrapper.tsx
+         - Enter key now advances to next round when phase === 'result'
+           (previously only submitted guess in playing phase)
+         - handleNextRef keeps a stable ref so keyboard handler doesn't need
+           handleNext in its deps (avoids re-registration on timeTakenSec changes)
+
+
+[2026-05-29] 5-round game loop + summary
+------------------------------------------
+ADDED    lib/types.ts — shared RoundResult interface
+         { score, distanceKm, timeTakenSec, didGuess }
+CHANGED  app/page.tsx — full session manager
+         - Tracks results[], currentRound, roundKey, showSummary
+         - handleNext(result) banks the round result and either advances
+           (roundKey++) or shows SummaryOverlay; no double-count risk because
+           result is passed at click time, not via async effect
+         - handlePlayAgain() resets all session state
+         - SummaryOverlay rendered on top of last round's map (stays mounted
+           so satellite map is visible through the blur backdrop)
+CHANGED  components/GameWrapper.tsx
+         - Props: round, totalRounds, runningTotal, isLastRound, onNext
+         - Removed onPlayAgain; merged into onNext(RoundResult)
+         - handleNext() computes final result from guessRef + timeTakenSec
+           and passes it to parent exactly once (at click time)
+         - Loading overlay shows "Round X of Y" alongside spinner
+CHANGED  components/HUD.tsx
+         - Added round progress dots (filled ≤ currentRound, empty = future)
+         - Dots turn red with the timer when urgent
+CHANGED  components/ResultOverlay.tsx — full rewrite
+         - Shows 5 round-progress dots at top of card
+         - Button becomes prominent white CTA: "Next round →" / "Final score →"
+         - Running total row (with mini bar) appears from round 2 onwards
+         - Score label changed to "Round score"
+         - runningTotal = previous rounds + this round (computed in GameWrapper
+           before onNext fires so parent hasn't updated yet → no double-count)
+ADDED    components/SummaryOverlay.tsx
+         - Dark blurred full-screen overlay (z-50, rgba(4,4,6,0.82) + blur 18)
+         - Per-round rows: round number, score bar, distance, score value
+         - Best round highlighted (brighter bar + bold white score)
+         - Animated total score count-up (1.6 s cubic ease-out)
+         - Contextual grade label: Flawless / Excellent / Strong / Decent / Rough
+         - Total progress bar (out of 30,000 for 5 rounds)
+         - "Play again" white CTA button
+CHANGED  app/globals.css — added @keyframes fadeIn for SummaryOverlay backdrop
+
+
+[2026-05-29] Shake fix + Play Again
+-------------------------------------
+CHANGED  components/GameMap.tsx — replaced rAF + jumpTo() animation with a
+         single easeTo() call using a custom Catmull-Rom easing function.
+         Root cause of shaking: jumpTo() called 60×/s from an external rAF
+         loop conflicts with Mapbox's own WebGL render cycle, causing
+         sub-pixel jitter. Using easeTo() lets Mapbox drive all interpolation
+         internally with no external camera writes → shake eliminated.
+ADDED    zoomEasing(t) — inverts catmullRomZoom to [0,1] progress so it can
+         be passed directly as the easeTo easing parameter
+REMOVED  animRafRef, requestAnimationFrame loop, drift constants
+         (MAX_DRIFT_LNG / MAX_DRIFT_LAT / DRIFT_START) — drift removed since
+         it required jumpTo() and is incompatible with the single-easeTo model
+ADDED    Feature: Play Again
+CHANGED  app/page.tsx — now 'use client'; tracks round state; passes
+         key={round} to GameWrapper (forces full React remount on new round →
+         fresh randomLandPoint, fresh map, all state reset) and passes
+         onPlayAgain callback
+CHANGED  components/GameWrapper.tsx — accepts onPlayAgain?: () => void prop,
+         threads it through to ResultOverlay
+CHANGED  components/ResultOverlay.tsx — accepts onPlayAgain?: () => void prop;
+         renders "Play again" button at the bottom of the result card
+
+
+[2026-05-29] Seamless zoom animation
+--------------------------------------
+CHANGED  components/GameMap.tsx — replaced 4× chained easeTo with a single
+         requestAnimationFrame loop driven by a Catmull-Rom spline through
+         ZOOMS [16, 14, 11, 6, 3.5] over TOTAL_MS (20 000 ms).
+         Catmull-Rom gives C¹ continuity — non-zero velocity at every
+         interior waypoint — so the camera flows through all four zoom levels
+         without decelerating to a stop between phases.
+REMOVED  PHASE_MS constant (no longer needed)
+ADDED    catmullRomZoom(t) helper — Catmull-Rom spline with clamped phantom
+         endpoints so the curve hits exactly ZOOMS[0] and ZOOMS[last]
+CHANGED  frozen effect now calls cancelAnimationFrame(animRafRef) before
+         easeTo so the rAF loop doesn't fight the zoom-out animation
+ADDED    animRafRef to store the active rAF ID for cancellation on unmount
+         or freeze
+
+
+[2026-05-29] Score curve floor + changelog
+-------------------------------------------
+CHANGED  lib/haversine.ts — calcScore() decay divisor 5 → 20
+         3 000 km now scores ~195 accuracy (×multiplier = 195–390 final)
+         instead of near-zero. Preserves close-range gradient:
+           0.1 km ≈ 2 953 | 5 km ≈ 2 681 | 50 km ≈ 2 105
+           200 km ≈ 1 479 | 1 000 km ≈ 617 | 3 000 km ≈ 195
+ADDED    CHANGELOG.txt (this file)
+
+
+[2026-05-29] Wall-clock timer + multiplicative scoring
+-------------------------------------------------------
+CHANGED  lib/haversine.ts — calcScore() signature and formula
+         OLD: additive   distScore(0–4 000) + speedBonus(0–2 000), max 6 000
+         NEW: multiplier accuracy(0–3 000) × multiplier(1.0–2.0), max 6 000
+         Prevents gaming the system: an instant random guess no longer earns
+         a guaranteed 2 000-pt speed bonus regardless of accuracy.
+CHANGED  components/GameWrapper.tsx
+         - Replaced integer timeLeftAtResult + timeLeftRef with float timeTakenSec
+           and gameStartTimeRef (Date.now()-based wall-clock)
+         - Timer ticks every 100 ms for smooth HUD; endRound captures elapsed
+           time to 2 decimal places via parseFloat(elapsed.toFixed(2))
+         - On time expiry: timeTakenSec set to GAME_DURATION (multiplier = 1.0)
+CHANGED  components/ResultOverlay.tsx
+         - Time display: `${timeTakenSec}s` → `${timeTakenSec.toFixed(2)}s`
+
+
+[2026-05-29] Result screen & replay
+-------------------------------------
+ADDED    components/ResultOverlay.tsx
+         - Minimalist dark card (rgba(8,8,10,0.92), blur backdrop)
+         - Location name via Mapbox reverse-geocode (place + country)
+         - Distance + time taken side-by-side (Stat component)
+         - Animated score count-up (cubic ease, 1.1 s)
+         - Thin progress bar (score / 6 000)
+         - "Time's up / No guess was placed" fallback when didGuess = false
+         - slideUp entrance animation (900 ms delay)
+ADDED    lib/haversine.ts — calcScore(), zoomForDistance()
+CHANGED  components/GameMap.tsx — replayInfo effect
+         - 2.2 s pause, then flyTo midpoint at zoomForDistance zoom (2.5 s arc)
+         - Off-white marker dropped on target at 5.1 s
+         - frozen effect: easeTo zoom 1.8 cubic ease-out (1.4 s) on round end
+CHANGED  components/MiniMap.tsx — showResult prop
+         - Gold marker on target, amber dashed line guess→target
+         - fitBounds (padding 55, maxZoom 8) to frame both pins
+         - No-guess fallback: flyTo target zoom 4
+CHANGED  components/GameWrapper.tsx
+         - Reverse-geocode target on phase = 'result' (Mapbox Geocoding v5)
+         - useMemo replayInfo so GameMap replay effect fires exactly once
+         - Enter key shortcut triggers handleSubmit
+
+
+[2026-05-28] Random land point + guess submission
+--------------------------------------------------
+ADDED    lib/randomLandPoint.ts
+         - world-atlas countries-110m topology → topojson-client → MultiPolygon
+         - @turf/random randomPoint + @turf/boolean-point-in-polygon rejection
+         - Bounding box [-180, -55, 180, 70] (excludes Antarctica)
+         - Key fix: objects.land is GeometryCollection → topoFeature returns
+           FeatureCollection; must extract .features[0]
+ADDED    components/HUD.tsx
+         - Countdown display; hidden during loading and result phases
+CHANGED  components/GameWrapper.tsx
+         - useState target via randomLandPoint()
+         - Interval timer (1 s) starts on handleMapReady; stops on guess/expiry
+         - guessRef / phaseRef / timeLeftRef pattern for stable callbacks
+         - Guess button (MiniMap) + Enter key both call handleSubmit
+CHANGED  components/MiniMap.tsx
+         - Guess button (48 px reserved height) — green when pin placed
+         - onSubmit prop wired to GameWrapper handleSubmit
+
+
+[2026-05-27] Scale bar
+-----------------------
+ADDED    components/ScaleBar.tsx
+         - Fixed 168 px bar width, 4 alternating dark/white segments
+         - Live distance label derived from Mapbox zoom + centre latitude
+         - Formula: mpp = (78 271.517 × cos(lat_rad)) / 2^zoom
+           (78 271.517 = 40 075 017 m / 512 — Mapbox uses 512 px tiles)
+         - Position: bottom: 20, left: 16
+CHANGED  app/globals.css
+         - Attribution control nudged right of scale bar:
+           .game-map .mapboxgl-ctrl-bottom-left { left: 192px; bottom: 14px }
+         - @keyframes slideUp for ResultOverlay entrance
+
+
+[2026-05-27] Zoom animation + minimap
+---------------------------------------
+ADDED    components/GameMap.tsx
+         - 4-phase zoom: 16→14→11→6→3.5 (5 000 ms each, 20 s total)
+         - Smoothstep easing t²(3−2t) on all phases: zero velocity at both
+           endpoints → C¹ continuity, no jerk at phase boundaries
+         - Phase 4 only: random drift ±10° lng / ±6° lat from target
+         - Fallback timer (6 s) if map.once('idle') never fires
+         - logoPosition 'bottom-right', attribution 'bottom-left'
+ADDED    components/MiniMap.tsx
+         - Mapbox outdoors-v12, initial center [0, 20] zoom 1.5
+         - Click to place/move red pin; crosshair cursor restored after drag
+         - Expand/shrink toggle (300 × 210 ↔ 540 × 400) with CSS transition
+         - ResizeObserver → map.resize() keeps canvas pixel-accurate during
+           transition
+ADDED    components/GameWrapper.tsx (initial)
+         - Dynamic imports (ssr: false) for all Mapbox components
+         - Phase state machine: loading → playing → result
+CHANGED  next.config.ts — devIndicators: false
+
+
+[2026-05-26] Project bootstrap
+--------------------------------
+ADDED    Next.js 16 app (App Router, TypeScript, Tailwind v4, Turbopack)
+ADDED    mapbox-gl v3, @types/mapbox-gl
+ADDED    world-atlas, topojson-client, @turf/random,
+         @turf/boolean-point-in-polygon, @turf/helpers
+ADDED    .env.local (gitignored) — NEXT_PUBLIC_MAPBOX_TOKEN
