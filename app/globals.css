@@ -32,6 +32,8 @@ body {
   Safe-area offsets keep it clear of the iPhone home indicator / notch.
 */
 .game-map .mapboxgl-ctrl-bottom-left {
-  left:   calc(192px + env(safe-area-inset-left, 0px));
-  bottom: calc(14px  + env(safe-area-inset-bottom, 0px));
+  left:             calc(192px + env(safe-area-inset-left, 0px));
+  bottom:           calc(20px  + env(safe-area-inset-bottom, 0px)); /* level with scale bar bottom */
+  transform:        scale(0.8);
+  transform-origin: bottom left;
 }

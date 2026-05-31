@@ -3,6 +3,25 @@ STRATA — CHANGELOG
 Reverse-chronological. Each entry covers one logical change session.
 
 
+[2026-05-30] Minimap redesign — GeoGuessr-style
+-------------------------------------------------
+CHANGED  components/MiniMap.tsx — complete rewrite
+         - Removed header strip; map fills a clean rounded-corner rectangle
+           (borderRadius 14, dark border + heavy drop shadow)
+         - Drag grip (⠿ icon, top-left overlay) — pointer-events based,
+           works on mouse and touch; uses setPointerCapture for reliability
+         - Expand / collapse: single button (top-right overlay), X when open
+         - Expanded state: position fixed inset-0 (full screen), map fills
+           top portion, guess button absolute at bottom with safe-area inset
+         - Guess button separated from map panel, below it; dark glass when
+           no pin → green (#22c55e) when pin placed → hides when disabled
+         - containerRef div stays at same React-tree position across states
+           so Mapbox never reinitialises on expand/collapse
+         - SIZES replaced with MAP_W/MAP_H constants; mobile 200×155,
+           desktop 240×182; isMobile from window resize listener
+         - Positioning stays bottom-right (avoids scale bar overlap)
+
+
 [2026-05-30] HUD redesign + landscape full-bleed
 --------------------------------------------------
 CHANGED  app/page.tsx
