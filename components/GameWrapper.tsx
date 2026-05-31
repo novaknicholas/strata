@@ -3,9 +3,9 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import type mapboxgl from 'mapbox-gl'
-import { randomLandPoint }        from '@/lib/randomLandPoint'
 import { haversineKm, calcScore } from '@/lib/haversine'
-import type { RoundResult }       from '@/lib/types'
+import { getGameLocation }        from '@/lib/getGameLocation'
+import type { RoundResult, GameMode } from '@/lib/types'
 
 const GameMap       = dynamic(() => import('./GameMap'),       { ssr: false })
 const MiniMap       = dynamic(() => import('./MiniMap'),       { ssr: false })
@@ -16,7 +16,8 @@ const ResultOverlay = dynamic(() => import('./ResultOverlay'), { ssr: false })
 interface GameWrapperProps {
   round:        number
   totalRounds:  number
-  gameDuration: number          // seconds per round, set by difficulty
+  gameDuration: number
+  gameMode:     GameMode
   /** Sum of scores from rounds already completed — does NOT include this round */
   runningTotal: number
   isLastRound:  boolean
@@ -28,11 +29,12 @@ export default function GameWrapper({
   round,
   totalRounds,
   gameDuration: GAME_DURATION,
+  gameMode,
   runningTotal,
   isLastRound,
   onNext,
 }: GameWrapperProps) {
-  const [target]      = useState(() => randomLandPoint())
+  const [target]      = useState(() => getGameLocation(gameMode))
   const [guess,  setGuess]         = useState<[number, number] | null>(null)
   const [timeLeft,    setTimeLeft]  = useState(GAME_DURATION)
   const [phase,       setPhase]     = useState<'loading' | 'playing' | 'result'>('loading')
@@ -61,6 +63,11 @@ export default function GameWrapper({
     if (phase !== 'result' || !guess || distanceKm === null) return undefined
     return { guessLng: guess[0], guessLat: guess[1], distanceKm }
   }, [phase, guess, distanceKm])
+
+  const miniMapShowResult = useMemo(
+    () => phase === 'result' ? { targetLng: target.lng, targetLat: target.lat } : undefined,
+    [phase, target],
+  )
 
   // ── Reverse-geocode target once results appear ───────────────────────────
   useEffect(() => {
@@ -171,11 +178,7 @@ export default function GameWrapper({
         onGuess={handleGuess}
         onSubmit={handleSubmit}
         disabled={phase === 'result'}
-        showResult={
-          phase === 'result'
-            ? { targetLng: target.lng, targetLat: target.lat }
-            : undefined
-        }
+        showResult={miniMapShowResult}
       />
 
       <HUD

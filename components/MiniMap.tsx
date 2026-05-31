@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, memo } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 
@@ -8,6 +8,7 @@ mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!
 
 const EXPANDED_KEY = 'strata_minimap_expanded_size'
 const MIN_W = 200, MIN_H = 150
+const BTN_H = 44, GAP = 6
 
 interface ResultData { targetLng: number; targetLat: number }
 interface MiniMapProps {
@@ -17,11 +18,13 @@ interface MiniMapProps {
   showResult?: ResultData
 }
 
-export default function MiniMap({ onGuess, onSubmit, disabled = false, showResult }: MiniMapProps) {
+function MiniMap({ onGuess, onSubmit, disabled = false, showResult }: MiniMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef       = useRef<mapboxgl.Map | null>(null)
   const markerRef    = useRef<mapboxgl.Marker | null>(null)
   const panelRef     = useRef<HTMLDivElement>(null)
+  const mapPanelRef  = useRef<HTMLDivElement>(null)
+  const guessBtnRef  = useRef<HTMLElement | null>(null)
 
   const onGuessRef  = useRef(onGuess)
   const disabledRef = useRef(disabled)
@@ -30,43 +33,55 @@ export default function MiniMap({ onGuess, onSubmit, disabled = false, showResul
   useEffect(() => { disabledRef.current = disabled }, [disabled])
   useEffect(() => { onSubmitRef.current = onSubmit }, [onSubmit])
 
-  const [hasPin,        setHasPin]        = useState(false)
-  const [expanded,      setExpanded]      = useState(false)
-  const [isMobile,      setIsMobile]      = useState(false)
-  const [dragPos,       setDragPos]       = useState<{ left: number; top: number } | null>(null)
-  const [expandedSize,  setExpandedSize]  = useState({ w: 380, h: 280 })
+  const [hasPin,       setHasPin]       = useState(false)
+  const [expanded,     setExpanded]     = useState(false)
+  const [isMobile,     setIsMobile]     = useState(false)
+  const [dragPos,      setDragPos]      = useState<{ left: number; top: number } | null>(null)
+  const [expandedSize, setExpandedSize] = useState({ w: 380, h: 280 })
 
-  // Keep a ref so resize pointerup can save without stale closure
   const expandedSizeRef = useRef(expandedSize)
   useEffect(() => { expandedSizeRef.current = expandedSize }, [expandedSize])
 
-  // Drag (move) refs
-  const dragStartRef = useRef<{ ptrX: number; ptrY: number; origLeft: number; origTop: number } | null>(null)
-  const draggingRef  = useRef(false)
+  // Synced ref so event handlers can read dragPos without stale closure
+  const dragPosRef = useRef(dragPos)
+  useEffect(() => { dragPosRef.current = dragPos }, [dragPos])
 
-  // Resize refs
-  const resizeStartRef = useRef<{ ptrX: number; ptrY: number; origW: number; origH: number } | null>(null)
+  // ── Resize button (top-left): tap = toggle, drag = resize large ───────────
+  // During a drag we do pure DOM manipulation — zero React re-renders, zero WebGL flicker.
+  // State is committed in a single batch on pointer-up.
+  const resizeRef = useRef<{
+    ptrX: number; ptrY: number
+    origW: number; origH: number
+    origRight: number; origBottom: number   // bottom-right corner of panel (stays fixed)
+    isPanelMoved: boolean
+    isDragging: boolean
+    rafId: number
+  } | null>(null)
+
+  // ── Move button (top-right): drag only ────────────────────────────────────
+  const moveRef = useRef<{
+    ptrX: number; ptrY: number
+    origLeft: number; origTop: number
+    panelW: number; panelH: number
+    isDragging: boolean
+  } | null>(null)
 
   // Mobile breakpoint + load saved expanded size
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 640)
     check()
     window.addEventListener('resize', check)
-
     try {
       const raw = localStorage.getItem(EXPANDED_KEY)
       if (raw) {
-        const saved = JSON.parse(raw)
-        if (saved?.w && saved?.h) setExpandedSize(saved)
+        const s = JSON.parse(raw)
+        if (s?.w && s?.h) setExpandedSize(s)
       }
     } catch { /* storage blocked */ }
-
     return () => window.removeEventListener('resize', check)
   }, [])
 
   // ── Mapbox init ───────────────────────────────────────────────────────────
-  // containerRef stays at the same React-tree position so the map is never
-  // destroyed when toggling expanded / small.
   useEffect(() => {
     if (mapRef.current || !containerRef.current) return
     const map = new mapboxgl.Map({
@@ -94,13 +109,16 @@ export default function MiniMap({ onGuess, onSubmit, disabled = false, showResul
     return () => { map.remove(); mapRef.current = null; markerRef.current = null }
   }, [])
 
-  // Sync canvas pixel size on any container resize (expand / drag-resize)
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
-    const ro = new ResizeObserver(() => mapRef.current?.resize())
+    let raf = 0
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => mapRef.current?.resize())
+    })
     ro.observe(el)
-    return () => ro.disconnect()
+    return () => { ro.disconnect(); cancelAnimationFrame(raf) }
   }, [])
 
   // ── Result visualisation ──────────────────────────────────────────────────
@@ -131,77 +149,159 @@ export default function MiniMap({ onGuess, onSubmit, disabled = false, showResul
     }
   }, [showResult])
 
-  // ── Move drag (grip icon, small mode only) ────────────────────────────────
-  const onGripDown = useCallback((e: React.PointerEvent) => {
-    e.preventDefault(); e.stopPropagation()
-    e.currentTarget.setPointerCapture(e.pointerId)
-    const rect = panelRef.current!.getBoundingClientRect()
-    draggingRef.current  = false
-    dragStartRef.current = { ptrX: e.clientX, ptrY: e.clientY, origLeft: rect.left, origTop: rect.top }
-  }, [])
-
-  const onGripMove = useCallback((e: React.PointerEvent) => {
-    if (!dragStartRef.current) return
-    const dx = e.clientX - dragStartRef.current.ptrX
-    const dy = e.clientY - dragStartRef.current.ptrY
-    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) draggingRef.current = true
-    if (!draggingRef.current) return
-    setDragPos({
-      left: Math.max(0, dragStartRef.current.origLeft + dx),
-      top:  Math.max(0, dragStartRef.current.origTop  + dy),
-    })
-  }, [])
-
-  const onGripUp = useCallback(() => {
-    dragStartRef.current = null; draggingRef.current = false
-  }, [])
-
-  // ── Resize drag (top-left corner handle, expanded mode only) ─────────────
-  // Panel is anchored bottom-right, so top-left is the free corner.
-  // Dragging left/up → bigger; dragging right/down → smaller.
+  // ── Resize button handlers (top-left) ─────────────────────────────────────
   const onResizeDown = useCallback((e: React.PointerEvent) => {
     e.preventDefault(); e.stopPropagation()
     e.currentTarget.setPointerCapture(e.pointerId)
-    resizeStartRef.current = {
+    const panelRect   = panelRef.current!.getBoundingClientRect()
+    const mapPanelRect = mapPanelRef.current?.getBoundingClientRect()
+    resizeRef.current = {
       ptrX: e.clientX, ptrY: e.clientY,
-      origW: expandedSizeRef.current.w,
-      origH: expandedSizeRef.current.h,
+      origW: mapPanelRect?.width  ?? expandedSizeRef.current.w,
+      origH: mapPanelRect?.height ?? expandedSizeRef.current.h,
+      origRight:  panelRect.right,
+      origBottom: panelRect.bottom,
+      isPanelMoved: dragPosRef.current !== null,
+      isDragging: false,
+      rafId: 0,
     }
   }, [])
 
   const onResizeMove = useCallback((e: React.PointerEvent) => {
-    if (!resizeStartRef.current) return
-    const dx  = e.clientX - resizeStartRef.current.ptrX
-    const dy  = e.clientY - resizeStartRef.current.ptrY
-    const maxW = window.innerWidth  - 48
-    const maxH = window.innerHeight - 80
-    setExpandedSize({
-      w: Math.max(MIN_W, Math.min(maxW, resizeStartRef.current.origW - dx)),
-      h: Math.max(MIN_H, Math.min(maxH, resizeStartRef.current.origH - dy)),
-    })
+    if (!resizeRef.current) return
+    const dx = e.clientX - resizeRef.current.ptrX
+    const dy = e.clientY - resizeRef.current.ptrY
+    if (!resizeRef.current.isDragging && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
+      resizeRef.current.isDragging = true
+      // Kill CSS transitions for the duration of the drag
+      if (mapPanelRef.current) mapPanelRef.current.style.transition = 'none'
+      if (guessBtnRef.current) guessBtnRef.current.style.transition  = 'none'
+    }
+    if (!resizeRef.current.isDragging) return
+
+    // Diagonal-only: single delta applied equally to W and H
+    const delta = -(dx + dy) / 2
+    const maxW  = window.innerWidth  - 48
+    const maxH  = window.innerHeight - BTN_H - GAP - 32
+    const newW  = Math.max(MIN_W, Math.min(maxW, resizeRef.current.origW + delta))
+    const newH  = Math.max(MIN_H, Math.min(maxH, resizeRef.current.origH + delta))
+
+    // Pure DOM — no React setState, no WebGL interruption
+    if (mapPanelRef.current) {
+      mapPanelRef.current.style.width  = `${newW}px`
+      mapPanelRef.current.style.height = `${newH}px`
+    }
+    if (guessBtnRef.current) guessBtnRef.current.style.width = `${newW}px`
+
+    // When panel is left/top anchored (moved from default), keep its bottom-right corner fixed
+    // so the resize expands up-left (same natural feel as the default bottom-right anchored state)
+    if (resizeRef.current.isPanelMoved && panelRef.current) {
+      const totalH  = newH + GAP + BTN_H
+      const rawLeft = resizeRef.current.origRight  - newW
+      const rawTop  = resizeRef.current.origBottom - totalH
+      panelRef.current.style.left = `${Math.max(0, Math.min(window.innerWidth  - newW,    rawLeft))}px`
+      panelRef.current.style.top  = `${Math.max(0, Math.min(window.innerHeight - totalH,  rawTop))}px`
+    }
+
+    // rAF-debounced map.resize()
+    cancelAnimationFrame(resizeRef.current.rafId)
+    resizeRef.current.rafId = requestAnimationFrame(() => mapRef.current?.resize())
   }, [])
 
   const onResizeUp = useCallback(() => {
-    if (resizeStartRef.current) {
-      try { localStorage.setItem(EXPANDED_KEY, JSON.stringify(expandedSizeRef.current)) } catch {}
+    if (!resizeRef.current) return
+    cancelAnimationFrame(resizeRef.current.rafId)
+
+    if (resizeRef.current.isDragging) {
+      const finalW = mapPanelRef.current
+        ? parseFloat(mapPanelRef.current.style.width)
+        : expandedSizeRef.current.w
+      const finalH = mapPanelRef.current
+        ? parseFloat(mapPanelRef.current.style.height)
+        : expandedSizeRef.current.h
+      const newSize = { w: finalW, h: finalH }
+
+      // Re-enable CSS transitions (React re-render restores the proper string)
+      if (mapPanelRef.current) mapPanelRef.current.style.transition = ''
+      if (guessBtnRef.current) guessBtnRef.current.style.transition  = ''
+
+      // Commit panel position if it was moved (DOM already shows this)
+      if (resizeRef.current.isPanelMoved && panelRef.current) {
+        setDragPos({
+          left: parseFloat(panelRef.current.style.left),
+          top:  parseFloat(panelRef.current.style.top),
+        })
+      }
+
+      // One React commit — DOM already matches, so no visual change
+      setExpandedSize(newSize)
+      setExpanded(true)
+
+      try { localStorage.setItem(EXPANDED_KEY, JSON.stringify(newSize)) } catch {}
+    } else {
+      // Pure tap → toggle small ↔ large, reset to default corner position
+      setExpanded(v => !v)
+      setDragPos(null)
     }
-    resizeStartRef.current = null
+    resizeRef.current = null
   }, [])
 
-  // Toggle: always reset drag position so sizing is predictable
-  const handleToggle = useCallback(() => {
-    setExpanded(v => !v)
-    setDragPos(null)
+  // ── Move button handlers (top-right) ──────────────────────────────────────
+  // Transform-based drag (zero React re-renders = no WebGL interruptions).
+  // On pointer-up: commit to left/top state in one flush.
+  const onMoveDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault(); e.stopPropagation()
+    e.currentTarget.setPointerCapture(e.pointerId)
+    const rect = panelRef.current!.getBoundingClientRect()
+    moveRef.current = {
+      ptrX: e.clientX, ptrY: e.clientY,
+      origLeft: rect.left, origTop: rect.top,
+      panelW: rect.width,  panelH: rect.height,
+      isDragging: false,
+    }
   }, [])
 
-  // ── Dimensions ────────────────────────────────────────────────────────────
+  const onMoveMove = useCallback((e: React.PointerEvent) => {
+    if (!moveRef.current || !panelRef.current) return
+    const dx = e.clientX - moveRef.current.ptrX
+    const dy = e.clientY - moveRef.current.ptrY
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moveRef.current.isDragging = true
+    if (!moveRef.current.isDragging) return
+
+    const rawLeft = moveRef.current.origLeft + dx
+    const rawTop  = moveRef.current.origTop  + dy
+    const clampedLeft = Math.max(0, Math.min(window.innerWidth  - moveRef.current.panelW, rawLeft))
+    const clampedTop  = Math.max(0, Math.min(window.innerHeight - moveRef.current.panelH, rawTop))
+
+    panelRef.current.style.transform =
+      `translate(${clampedLeft - moveRef.current.origLeft}px,${clampedTop - moveRef.current.origTop}px)`
+  }, [])
+
+  const onMoveUp = useCallback(() => {
+    const m = moveRef.current
+    if (m?.isDragging && panelRef.current) {
+      const panel = panelRef.current
+      const rect  = panel.getBoundingClientRect()
+      const clampedLeft = Math.max(0, Math.min(window.innerWidth  - rect.width,  rect.left))
+      const clampedTop  = Math.max(0, Math.min(window.innerHeight - rect.height, rect.top))
+      panel.style.position  = 'absolute'
+      panel.style.left      = `${clampedLeft}px`
+      panel.style.top       = `${clampedTop}px`
+      panel.style.bottom    = ''
+      panel.style.right     = ''
+      panel.style.transform = ''
+      setDragPos({ left: clampedLeft, top: clampedTop })
+    } else if (panelRef.current) {
+      panelRef.current.style.transform = ''
+    }
+    moveRef.current = null
+  }, [])
+
+  // ── Layout ────────────────────────────────────────────────────────────────
   const MAP_W = expanded ? expandedSize.w : (isMobile ? 200 : 240)
   const MAP_H = expanded ? expandedSize.h : (isMobile ? 155 : 182)
-  const BTN_H = 44
 
-  // ── Positioning ───────────────────────────────────────────────────────────
-  // Expanded always uses default corner (no drag while expanded).
-  const posStyle: React.CSSProperties = (!expanded && dragPos)
+  const posStyle: React.CSSProperties = dragPos
     ? { position: 'absolute', left: dragPos.left, top: dragPos.top }
     : {
         position: 'absolute',
@@ -209,116 +309,83 @@ export default function MiniMap({ onGuess, onSubmit, disabled = false, showResul
         right:  'calc(1rem + env(safe-area-inset-right, 0px))',
       }
 
+  const iconBtn = (extra?: React.CSSProperties): React.CSSProperties => ({
+    position: 'absolute', zIndex: 5,
+    width: 26, height: 26, borderRadius: 6, padding: 0,
+    background:           'rgba(0,0,0,0.55)',
+    backdropFilter:       'blur(8px)',
+    WebkitBackdropFilter: 'blur(8px)',
+    border:    '1px solid rgba(255,255,255,0.11)',
+    display:   'flex', alignItems: 'center', justifyContent: 'center',
+    touchAction: 'none', userSelect: 'none',
+    ...extra,
+  })
+
   return (
     <div
       ref={panelRef}
-      style={{ ...posStyle, zIndex: 30, display: 'flex', flexDirection: 'column', gap: 6 }}
+      style={{ ...posStyle, zIndex: 30, display: 'flex', flexDirection: 'column', gap: GAP }}
     >
       {/* ── Map panel ────────────────────────────────────────────────────── */}
-      <div style={{
-        position: 'relative', flexShrink: 0,
-        width: MAP_W, height: MAP_H,
-        borderRadius: 14,
-        overflow: 'hidden',
-        border:    '1px solid rgba(255,255,255,0.11)',
-        boxShadow: '0 8px 40px rgba(0,0,0,0.7), 0 2px 6px rgba(0,0,0,0.45)',
-        transition: expanded ? 'none' : 'width 0.25s cubic-bezier(0.16,1,0.3,1), height 0.25s cubic-bezier(0.16,1,0.3,1)',
-      }}>
+      <div
+        ref={mapPanelRef}
+        style={{
+          position: 'relative', flexShrink: 0,
+          width: MAP_W, height: MAP_H,
+          borderRadius: 14, overflow: 'hidden',
+          border:     '1px solid rgba(255,255,255,0.11)',
+          boxShadow:  '0 8px 40px rgba(0,0,0,0.7), 0 2px 6px rgba(0,0,0,0.45)',
+          transition: 'width 0.22s cubic-bezier(0.16,1,0.3,1), height 0.22s cubic-bezier(0.16,1,0.3,1)',
+        }}
+      >
 
-        {/* Mapbox canvas — fixed tree position, never remounted */}
+        {/* Mapbox canvas — always at this tree position, never remounted */}
         <div ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
 
-        {/* ── Top-left corner: drag grip (small) or resize handle (expanded) */}
+        {/* ── Top-left: resize button (tap = toggle, drag = resize large) ─── */}
         {!disabled && (
-          expanded ? (
-            /* Resize handle — drag to grow/shrink expanded panel */
-            <div
-              onPointerDown={onResizeDown}
-              onPointerMove={onResizeMove}
-              onPointerUp={onResizeUp}
-              title="Drag to resize"
-              style={{
-                position: 'absolute', top: 7, left: 7, zIndex: 5,
-                width: 26, height: 26, borderRadius: 6,
-                background:           'rgba(0,0,0,0.55)',
-                backdropFilter:       'blur(8px)',
-                WebkitBackdropFilter: 'blur(8px)',
-                border:    '1px solid rgba(255,255,255,0.10)',
-                cursor:    'nwse-resize',
-                display:   'flex', alignItems: 'center', justifyContent: 'center',
-                touchAction: 'none', userSelect: 'none',
-              }}
-            >
-              {/* Diagonal resize stripes */}
+          <div
+            onPointerDown={onResizeDown}
+            onPointerMove={onResizeMove}
+            onPointerUp={onResizeUp}
+            title={expanded ? 'Tap to collapse · Drag to resize' : 'Tap to expand · Drag to resize'}
+            style={iconBtn({ top: 7, left: 7, cursor: 'nwse-resize' })}
+          >
+            {expanded ? (
               <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
-                stroke="rgba(255,255,255,0.65)" strokeWidth="1.4" strokeLinecap="round">
-                <line x1="1" y1="9" x2="9" y2="1"/>
-                <line x1="1" y1="5" x2="5" y2="1"/>
-                <line x1="5" y1="9" x2="9" y2="5"/>
+                stroke="rgba(255,255,255,0.75)" strokeWidth="1.5">
+                <path d="M4 6H1v3M6 4h3V1M1 9l3.5-3.5M9 1L5.5 4.5"/>
               </svg>
-            </div>
-          ) : (
-            /* Move grip — drag to reposition the small panel */
-            <div
-              onPointerDown={onGripDown}
-              onPointerMove={onGripMove}
-              onPointerUp={onGripUp}
-              title="Drag to move"
-              style={{
-                position: 'absolute', top: 7, left: 7, zIndex: 5,
-                width: 26, height: 26, borderRadius: 6,
-                background:           'rgba(0,0,0,0.55)',
-                backdropFilter:       'blur(8px)',
-                WebkitBackdropFilter: 'blur(8px)',
-                border:    '1px solid rgba(255,255,255,0.10)',
-                cursor:    'grab',
-                display:   'flex', alignItems: 'center', justifyContent: 'center',
-                touchAction: 'none', userSelect: 'none',
-              }}
-            >
-              {/* 2 × 2 dot grip */}
-              <svg width="8" height="8" viewBox="0 0 8 8" fill="rgba(255,255,255,0.6)">
-                <circle cx="2" cy="2" r="1"/><circle cx="6" cy="2" r="1"/>
-                <circle cx="2" cy="6" r="1"/><circle cx="6" cy="6" r="1"/>
+            ) : (
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
+                stroke="rgba(255,255,255,0.75)" strokeWidth="1.5">
+                <path d="M6 1h3v3M4 9H1V6M9 1L5.5 4.5M1 9l3.5-3.5"/>
               </svg>
-            </div>
-          )
+            )}
+          </div>
         )}
 
-        {/* ── Top-right: expand / collapse button ─────────────────────────── */}
-        <button
-          onClick={handleToggle}
-          title={expanded ? 'Collapse' : 'Expand'}
-          style={{
-            position: 'absolute', top: 7, right: 7, zIndex: 5,
-            width: 26, height: 26, borderRadius: 6, padding: 0,
-            background:           'rgba(0,0,0,0.55)',
-            backdropFilter:       'blur(8px)',
-            WebkitBackdropFilter: 'blur(8px)',
-            border:    '1px solid rgba(255,255,255,0.12)',
-            cursor:    'pointer',
-            display:   'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-        >
-          {expanded ? (
-            /* Inward arrows — collapse */
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
-              stroke="rgba(255,255,255,0.78)" strokeWidth="1.5">
-              <path d="M4 6H1v3M6 4h3V1M1 9l3.5-3.5M9 1L5.5 4.5"/>
+        {/* ── Top-right: move button (drag only) ──────────────────────────── */}
+        {!disabled && (
+          <div
+            onPointerDown={onMoveDown}
+            onPointerMove={onMoveMove}
+            onPointerUp={onMoveUp}
+            title="Drag to move"
+            style={iconBtn({ top: 7, right: 7, cursor: 'grab' })}
+          >
+            <svg width="8" height="8" viewBox="0 0 8 8" fill="rgba(255,255,255,0.6)">
+              <circle cx="2" cy="2" r="1"/><circle cx="6" cy="2" r="1"/>
+              <circle cx="2" cy="6" r="1"/><circle cx="6" cy="6" r="1"/>
             </svg>
-          ) : (
-            /* Outward arrows — expand */
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
-              stroke="rgba(255,255,255,0.78)" strokeWidth="1.5">
-              <path d="M6 1h3v3M4 9H1V6M9 1L5.5 4.5M1 9l3.5-3.5"/>
-            </svg>
-          )}
-        </button>
+          </div>
+        )}
       </div>
 
       {/* ── Guess button ──────────────────────────────────────────────────── */}
       {!disabled ? (
         <button
+          ref={el => { guessBtnRef.current = el }}
           onClick={() => { if (hasPin) onSubmitRef.current?.() }}
           disabled={!hasPin}
           style={{
@@ -329,23 +396,27 @@ export default function MiniMap({ onGuess, onSubmit, disabled = false, showResul
             border:               hasPin ? 'none' : '1px solid rgba(255,255,255,0.09)',
             borderRadius:         10,
             color:                hasPin ? '#fff' : 'rgba(255,255,255,0.28)',
-            fontSize:             12,
-            fontWeight:           700,
+            fontSize:             12, fontWeight: 700,
             letterSpacing:        '0.14em',
             textTransform:        'uppercase' as const,
             cursor:               hasPin ? 'pointer' : 'default',
-            transition:           'background 0.18s, color 0.18s, width 0.25s cubic-bezier(0.16,1,0.3,1)',
+            transition:           'background 0.18s, color 0.18s, width 0.22s cubic-bezier(0.16,1,0.3,1)',
           }}
         >
           {hasPin ? 'Guess →' : 'Place a pin'}
         </button>
       ) : (
-        <div style={{
-          width: MAP_W, height: BTN_H, borderRadius: 10, flexShrink: 0,
-          background: 'rgba(0,0,0,0.2)',
-          transition: 'width 0.25s cubic-bezier(0.16,1,0.3,1)',
-        }} />
+        <div
+          ref={el => { guessBtnRef.current = el }}
+          style={{
+            width: MAP_W, height: BTN_H, borderRadius: 10, flexShrink: 0,
+            background: 'rgba(0,0,0,0.2)',
+            transition: 'width 0.22s cubic-bezier(0.16,1,0.3,1)',
+          }}
+        />
       )}
     </div>
   )
 }
+
+export default memo(MiniMap)

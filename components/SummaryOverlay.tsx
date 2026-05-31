@@ -1,13 +1,13 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import type { RoundResult }            from '@/lib/types'
+import type { RoundResult, GameMode }  from '@/lib/types'
 
 interface SummaryOverlayProps {
-  results:      RoundResult[]
-  totalRounds:  number
-  gameDuration: number
-  onPlayAgain:  () => void
+  results:     RoundResult[]
+  totalRounds: number
+  gameMode:    GameMode
+  onPlayAgain: () => void
 }
 
 function formatDist(km: number | null): string {
@@ -29,7 +29,13 @@ function grade(pct: number): string {
   return 'Keep exploring'
 }
 
-export default function SummaryOverlay({ results, totalRounds, gameDuration, onPlayAgain }: SummaryOverlayProps) {
+const MODE_LABEL: Record<GameMode, string> = {
+  urban:     'Urban',
+  uncharted: 'Uncharted',
+  terra:     'Terra',
+}
+
+export default function SummaryOverlay({ results, totalRounds, gameMode, onPlayAgain }: SummaryOverlayProps) {
   const total     = results.reduce((s, r) => s + r.score, 0)
   const maxTotal  = MAX_PER_ROUND * totalRounds
   const bestScore = Math.max(...results.map(r => r.score), 0)
@@ -88,11 +94,9 @@ export default function SummaryOverlay({ results, totalRounds, gameDuration, onP
   }, [visible, total])
 
   // ── Share / copy ─────────────────────────────────────────────────────────
-  const diffLabel = gameDuration >= 30 ? 'Explorer' : gameDuration >= 20 ? 'Navigator' : 'Expert'
-
   const handleShare = () => {
     const lines = [
-      `Strata [${diffLabel}] — ${grade(totalPct)} · ${total.toLocaleString()} / ${maxTotal.toLocaleString()}`,
+      `Strata [${MODE_LABEL[gameMode]}] — ${grade(totalPct)} · ${total.toLocaleString()} / ${maxTotal.toLocaleString()}`,
       '',
       results.map((r, i) =>
         `${i + 1}. ${r.didGuess ? `${formatDist(r.distanceKm)} · ${r.score.toLocaleString()} pts` : 'no guess'}`
