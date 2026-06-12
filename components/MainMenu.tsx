@@ -3,26 +3,55 @@
 import { useEffect, useState } from 'react'
 import type { GameMode } from '@/lib/types'
 
-// ── Topographic contour paths — computed once at module level ─────────────
-// 26 organic wavy lines spanning the full viewBox height (covers tall mobile pages)
-const TOPO_PATHS: string[] = (() => {
-  const paths: string[] = []
-  for (let i = 0; i < 26; i++) {
-    const baseY = i * 58
-    const amp   = 7  + (i % 5) * 4.5
-    const f1    = 0.0020 + (i % 4) * 0.0006
-    const f2    = f1 * 2.7
-    const phase = i * 1.52
-    const pts: string[] = []
-    for (let x = -100; x <= 1540; x += 11) {
-      const y = baseY
-        + amp * Math.sin(x * f1 + phase)
-        + amp * 0.38 * Math.cos(x * f2 + phase * 0.58)
-      pts.push(`${x === -100 ? 'M' : 'L'}${x.toFixed(0)},${y.toFixed(1)}`)
+// ── Rolling-hill topographic contour paths ────────────────────────────────
+// Each "hill" is a cluster of concentric closed ellipses (like a real topo map).
+// Slight organic wobble on each ring keeps them from looking like perfect circles.
+// viewBox is 1440 × 2000 so contours cover even tall mobile scroll pages.
+const TOPO_PATHS: { d: string; index: boolean }[] = (() => {
+  // [cx, cy, rx, ry, levels, wobbleFreq, wobbleAmp]
+  type Hill = [number, number, number, number, number, number, number]
+  const hills: Hill[] = [
+    [  280,  320, 420, 230, 8, 4, 0.07],
+    [ 1150,  230, 380, 210, 7, 3, 0.06],
+    [  730,  700, 460, 260, 9, 5, 0.08],
+    [  130, 1050, 320, 190, 6, 4, 0.06],
+    [ 1240, 1080, 410, 235, 7, 3, 0.07],
+    [  560, 1500, 390, 220, 7, 4, 0.07],
+    [ 1060, 1780, 340, 195, 6, 5, 0.06],
+    [   -60,  700, 270, 160, 5, 3, 0.05],   // partially off left edge
+    [ 1510,  940, 300, 170, 5, 4, 0.05],   // partially off right edge
+    [  880, 2020, 350, 200, 5, 4, 0.06],   // partially off bottom
+  ]
+
+  const STEPS = 120  // points per ring — more = smoother curves
+  const results: { d: string; index: boolean }[] = []
+
+  for (const [cx, cy, maxRx, maxRy, levels, wFreq, wAmp] of hills) {
+    for (let lvl = 1; lvl <= levels; lvl++) {
+      const t    = lvl / levels           // 1 = outermost ring, 1/levels = innermost
+      const rx   = maxRx * t
+      const ry   = maxRy * t
+      const phaseOffset = lvl * 0.63      // each ring wobbles slightly differently
+
+      const pts: string[] = []
+      for (let s = 0; s <= STEPS; s++) {
+        const θ      = (s / STEPS) * Math.PI * 2
+        // Organic wobble: two harmonic terms
+        const wobble = 1
+          + wAmp       * Math.sin(wFreq * θ + phaseOffset)
+          + wAmp * 0.4 * Math.cos((wFreq + 2) * θ + phaseOffset * 0.7)
+        const x = cx + rx * wobble * Math.cos(θ)
+        const y = cy + ry * wobble * Math.sin(θ)
+        pts.push(`${s === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`)
+      }
+      pts.push('Z')
+
+      // Every 3rd ring from the outside is an "index contour" (slightly heavier)
+      const fromOuter = levels - lvl
+      results.push({ d: pts.join(' '), index: fromOuter % 3 === 0 })
     }
-    paths.push(pts.join(' '))
   }
-  return paths
+  return results
 })()
 
 // ── Mode definitions ──────────────────────────────────────────────────────
@@ -36,6 +65,13 @@ const MODES: {
   { key: 'urban',     label: 'Urban',     desc: 'Cities & towns worldwide',       img: '/images/urban.jpg',     fallback: '#2C4A6E' },
   { key: 'uncharted', label: 'Uncharted', desc: 'Forests, deserts & wilderness',  img: '/images/uncharted.jpg', fallback: '#2D5A27' },
   { key: 'terra',     label: 'Terra',     desc: 'Anywhere on Earth',              img: '/images/terra.jpg',     fallback: '#1A2F4A' },
+  { key: 'islands',   label: 'Islands',   desc: 'Tropical & remote islands',      img: '/images/islands.jpg',   fallback: '#1A4A4A' },
+  { key: 'mountains', label: 'Mountains', desc: 'High peaks above 2,000 m',       img: '/images/mountains.jpg', fallback: '#3A3A4A' },
+  { key: 'volcanoes', label: 'Volcanoes', desc: 'Active & dormant volcanoes',      img: '/images/volcanoes.jpg', fallback: '#4A1A0A' },
+  { key: 'usa',       label: 'USA',       desc: 'Cities across the contiguous US', img: '/images/usa.jpg',       fallback: '#1A2A4A' },
+  { key: 'europe',    label: 'Europe',    desc: 'Towns & cities across Europe',   img: '/images/europe.jpg',    fallback: '#2A2A3A' },
+  { key: 'airports',  label: 'Airports',  desc: 'Major airports worldwide',        img: '/images/airports.jpg',  fallback: '#1A1A2A' },
+  { key: 'landmarks', label: 'Landmarks', desc: 'Iconic sites & wonders',          img: '/images/landmarks.jpg', fallback: '#2A1A0A' },
 ]
 
 const BEST_KEY = 'strata_best_score'
@@ -85,8 +121,8 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
         {/* ── Topo contour-line background (decorative) ─────────────────── */}
         <svg
           aria-hidden
-          viewBox="0 0 1440 1500"
-          preserveAspectRatio="none"
+          viewBox="0 0 1440 2000"
+          preserveAspectRatio="xMidYMin slice"
           style={{
             position:      'absolute',
             inset:          0,
@@ -95,14 +131,14 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
             pointerEvents: 'none',
           }}
         >
-          {TOPO_PATHS.map((d, i) => (
+          {TOPO_PATHS.map(({ d, index }, i) => (
             <path
               key={i}
               d={d}
               fill="none"
               stroke="#5A7050"
-              strokeWidth={i % 5 === 0 ? 1.4 : 0.8}
-              opacity={i % 5 === 0 ? 0.11 : 0.065}
+              strokeWidth={index ? 1.3 : 0.75}
+              opacity={index ? 0.12 : 0.07}
             />
           ))}
         </svg>
@@ -216,11 +252,11 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
 
           {/* ── Mode tiles ────────────────────────────────────────────── */}
           {/*
-           * grid-cols-1 on mobile (full-width tiles, stacked, scroll to see all)
-           * sm:grid-cols-3 on desktop (side by side)
+           * grid-cols-2 on mobile (2 per row, scrollable)
+           * sm:grid-cols-4 on desktop (4 per row, 3 rows for 10 modes)
            */}
           <div
-            className="grid grid-cols-1 sm:grid-cols-3 w-full"
+            className="grid grid-cols-2 sm:grid-cols-4 w-full"
             style={{ gap: 14, marginBottom: 44 }}
           >
             {MODES.map(mode => {
@@ -235,12 +271,12 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
                   onKeyDown={e => e.key === 'Enter' && onPlay(mode.key)}
                   onMouseEnter={() => setHovered(mode.key)}
                   onMouseLeave={() => setHovered(null)}
+                  className="h-[200px] sm:h-[280px]"
                   style={{
                     position:   'relative',
                     borderRadius: 18,
                     overflow:   'hidden',
                     cursor:     'pointer',
-                    aspectRatio: '16 / 9',
                     background: mode.fallback,
                     boxShadow:  active
                       ? '0 10px 40px rgba(0,0,0,0.28), 0 2px 8px rgba(0,0,0,0.14)'

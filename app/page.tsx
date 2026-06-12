@@ -49,7 +49,7 @@ export default function Home() {
     <main className="fixed inset-0 overflow-hidden bg-stone-100">
       {gamePhase !== 'menu' && (
         <GameWrapper
-          key={roundKey}
+          roundKey={roundKey}
           round={currentRound}
           totalRounds={TOTAL_ROUNDS}
           gameDuration={GAME_DURATION}

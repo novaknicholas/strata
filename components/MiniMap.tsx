@@ -12,19 +12,22 @@ const BTN_H = 44, GAP = 6
 
 interface ResultData { targetLng: number; targetLat: number }
 interface MiniMapProps {
+  /** Increments each round — triggers in-place reset without remounting. */
+  roundKey:    number
   onGuess:     (coords: [number, number]) => void
   onSubmit?:   () => void
   disabled?:   boolean
   showResult?: ResultData
 }
 
-function MiniMap({ onGuess, onSubmit, disabled = false, showResult }: MiniMapProps) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const mapRef       = useRef<mapboxgl.Map | null>(null)
-  const markerRef    = useRef<mapboxgl.Marker | null>(null)
-  const panelRef     = useRef<HTMLDivElement>(null)
-  const mapPanelRef  = useRef<HTMLDivElement>(null)
-  const guessBtnRef  = useRef<HTMLElement | null>(null)
+function MiniMap({ roundKey, onGuess, onSubmit, disabled = false, showResult }: MiniMapProps) {
+  const containerRef    = useRef<HTMLDivElement>(null)
+  const mapRef          = useRef<mapboxgl.Map | null>(null)
+  const markerRef       = useRef<mapboxgl.Marker | null>(null)
+  const resultMarkerRef = useRef<mapboxgl.Marker | null>(null)  // yellow answer pin
+  const panelRef        = useRef<HTMLDivElement>(null)
+  const mapPanelRef     = useRef<HTMLDivElement>(null)
+  const guessBtnRef     = useRef<HTMLElement | null>(null)
 
   const onGuessRef  = useRef(onGuess)
   const disabledRef = useRef(disabled)
@@ -128,7 +131,8 @@ function MiniMap({ onGuess, onSubmit, disabled = false, showResult }: MiniMapPro
     if (!map.isStyleLoaded()) return
     const target: [number, number] = [showResult.targetLng, showResult.targetLat]
     const guess = markerRef.current?.getLngLat()
-    new mapboxgl.Marker({ color: '#f59e0b' }).setLngLat(target).addTo(map)
+    resultMarkerRef.current = new mapboxgl.Marker({ color: '#f59e0b' })
+      .setLngLat(target).addTo(map)
     if (guess) {
       const gc: [number, number] = [guess.lng, guess.lat]
       if (!map.getSource('result-line')) {
@@ -148,6 +152,43 @@ function MiniMap({ onGuess, onSubmit, disabled = false, showResult }: MiniMapPro
       map.flyTo({ center: target, zoom: 4, duration: 1_000 })
     }
   }, [showResult])
+
+  // ── Round reset: clear markers/line, recenter to world ───────────────────
+  // Skips the initial mount; fires on every subsequent roundKey increment.
+  // dragPos and expandedSize are intentionally NOT reset — user layout persists.
+  //
+  // Uses jumpTo (not flyTo) so the minimap is instantly at world view when the
+  // loading screen lifts — no risk of revealing a mid-animation minimap state.
+  const isFirstRound = useRef(true)
+  useEffect(() => {
+    if (isFirstRound.current) { isFirstRound.current = false; return }
+    const map = mapRef.current
+    if (!map) return
+
+    // Remove guess pin
+    markerRef.current?.remove()
+    markerRef.current = null
+
+    // Remove answer pin
+    resultMarkerRef.current?.remove()
+    resultMarkerRef.current = null
+
+    // Remove result line (layer must be removed before source)
+    if (map.getLayer('result-line'))  map.removeLayer('result-line')
+    if (map.getSource('result-line')) map.removeSource('result-line')
+
+    // Cancel any ongoing fitBounds/flyTo from the result phase before jumpTo.
+    // Without stop(), a running animation overrides the jumpTo and pulls the
+    // minimap back to the previous round's answer location mid-round.
+    map.stop()
+
+    // Instantly reset to world view — loading screen covers this transition so
+    // no animation is needed, and jumpTo ensures cleanup is fully committed
+    // before triggerAnimation fires in GameMap (which is in the next render).
+    map.jumpTo({ center: [0, 20], zoom: 1.5 })
+
+    setHasPin(false)
+  }, [roundKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Resize button handlers (top-left) ─────────────────────────────────────
   const onResizeDown = useCallback((e: React.PointerEvent) => {

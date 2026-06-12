@@ -4,8 +4,8 @@ import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import type mapboxgl from 'mapbox-gl'
 import { haversineKm, calcScore } from '@/lib/haversine'
-import { getGameLocation }        from '@/lib/getGameLocation'
-import type { RoundResult, GameMode } from '@/lib/types'
+import { getGameLocation }                  from '@/lib/getGameLocation'
+import type { RoundResult, GameMode, GameLocation } from '@/lib/types'
 
 const GameMap       = dynamic(() => import('./GameMap'),       { ssr: false })
 const MiniMap       = dynamic(() => import('./MiniMap'),       { ssr: false })
@@ -14,6 +14,8 @@ const ScaleBar      = dynamic(() => import('./ScaleBar'),      { ssr: false })
 const ResultOverlay = dynamic(() => import('./ResultOverlay'), { ssr: false })
 
 interface GameWrapperProps {
+  /** Increments on each round transition — triggers in-place reset (NOT a React key). */
+  roundKey:     number
   round:        number
   totalRounds:  number
   gameDuration: number
@@ -26,6 +28,7 @@ interface GameWrapperProps {
 }
 
 export default function GameWrapper({
+  roundKey,
   round,
   totalRounds,
   gameDuration: GAME_DURATION,
@@ -34,24 +37,47 @@ export default function GameWrapper({
   isLastRound,
   onNext,
 }: GameWrapperProps) {
-  const [target]      = useState(() => getGameLocation(gameMode))
-  const [guess,  setGuess]         = useState<[number, number] | null>(null)
-  const [timeLeft,    setTimeLeft]  = useState(GAME_DURATION)
-  const [phase,       setPhase]     = useState<'loading' | 'playing' | 'result'>('loading')
-  const [mapInstance, setMapInstance] = useState<mapboxgl.Map | null>(null)
-  const [timeTakenSec,  setTimeTakenSec]  = useState(0)
-  const [locationName,  setLocationName]  = useState<string | null>(null)
+  const [target,       setTarget]       = useState<GameLocation>(() => getGameLocation(gameMode))
+  const [guess,        setGuess]        = useState<[number, number] | null>(null)
+  const [timeLeft,     setTimeLeft]     = useState(GAME_DURATION)
+  const [phase,        setPhase]        = useState<'loading' | 'playing' | 'result'>('loading')
+  const [mapInstance,  setMapInstance]  = useState<mapboxgl.Map | null>(null)
+  const [timeTakenSec, setTimeTakenSec] = useState(0)
+  const [locationName, setLocationName] = useState<string | null>(null)
 
   const intervalRef      = useRef<ReturnType<typeof setInterval> | null>(null)
   const gameStartTimeRef = useRef<number>(0)
-  const guessRef = useRef<[number, number] | null>(null)
-  const phaseRef = useRef<'loading' | 'playing' | 'result'>('loading')
-  const onNextRef    = useRef(onNext)
-  const handleNextRef = useRef<() => void>(() => {})
+  const pausedAtRef      = useRef<number | null>(null)   // set while tab is hidden during 'playing'
+  const guessRef         = useRef<[number, number] | null>(null)
+  const phaseRef         = useRef<'loading' | 'playing' | 'result'>('loading')
+  const onNextRef        = useRef(onNext)
+  const handleNextRef    = useRef<() => void>(() => {})
   useEffect(() => { onNextRef.current = onNext }, [onNext])
 
   useEffect(() => { guessRef.current = guess }, [guess])
   useEffect(() => { phaseRef.current = phase }, [phase])
+
+  // ── Per-round reset (triggered by roundKey incrementing) ────────────────
+  // Skip the initial mount — useState initializer already handles round 1.
+  const isFirstRound = useRef(true)
+  useEffect(() => {
+    if (isFirstRound.current) { isFirstRound.current = false; return }
+
+    // Stop any running timer and clear any paused-tab state
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current)
+      intervalRef.current = null
+    }
+    pausedAtRef.current = null
+
+    // Pick new location and reset all round state in one batch
+    setTarget(getGameLocation(gameMode))
+    setGuess(null)
+    setTimeLeft(GAME_DURATION)
+    setPhase('loading')
+    setTimeTakenSec(0)
+    setLocationName(null)
+  }, [roundKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Derived result values ────────────────────────────────────────────────
   const distanceKm = guess ? haversineKm(guess, [target.lng, target.lat]) : null
@@ -69,9 +95,21 @@ export default function GameWrapper({
     [phase, target],
   )
 
-  // ── Reverse-geocode target once results appear ───────────────────────────
+  // ── Location name: use built-in name or reverse-geocode ─────────────────
   useEffect(() => {
     if (phase !== 'result') return
+
+    // Most modes carry a name in the data — skip the Mapbox API call.
+    // Only Terra and Uncharted fall through to reverse-geocoding.
+    if (target.name) {
+      setLocationName(
+        target.country
+          ? `${target.name}, ${target.country}`
+          : target.name,
+      )
+      return
+    }
+
     const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
     if (!token) return
     fetch(
@@ -101,14 +139,14 @@ export default function GameWrapper({
       clearInterval(intervalRef.current)
       intervalRef.current = null
     }
+    pausedAtRef.current = null
     setTimeTakenSec(elapsed)
     setPhase('result')
   }, [])
 
-  // ── Map ready: start clock ───────────────────────────────────────────────
-  const handleMapReady = useCallback(() => {
-    gameStartTimeRef.current = Date.now()
-    setPhase('playing')
+  // ── Shared ticker — extracted so the visibility handler can restart it ───
+  const startTicking = useCallback(() => {
+    if (intervalRef.current) clearInterval(intervalRef.current)
     intervalRef.current = setInterval(() => {
       const elapsed   = (Date.now() - gameStartTimeRef.current) / 1_000
       const remaining = Math.max(0, GAME_DURATION - elapsed)
@@ -120,7 +158,38 @@ export default function GameWrapper({
         setPhase('result')
       }
     }, 100)
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Map ready: start clock ───────────────────────────────────────────────
+  const handleMapReady = useCallback(() => {
+    gameStartTimeRef.current = Date.now()
+    setPhase('playing')
+    startTicking()
+  }, [startTicking])
+
+  // ── Pause/resume timer when tab is hidden/shown ──────────────────────────
+  // Without this, Date.now()-based elapsed time accumulates while the tab is
+  // hidden, causing the round to auto-expire the moment the user returns.
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.hidden) {
+        // Tab hidden: freeze the timer if a round is in progress
+        if (phaseRef.current !== 'playing') return
+        if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null }
+        pausedAtRef.current = Date.now()
+      } else {
+        // Tab visible: shift gameStartTime forward by the hidden duration so
+        // the remaining time is exactly what it was when the tab was hidden.
+        if (pausedAtRef.current !== null && phaseRef.current === 'playing') {
+          gameStartTimeRef.current += Date.now() - pausedAtRef.current
+          startTicking()
+        }
+        pausedAtRef.current = null
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }, [startTicking])
 
   // ── Guess submission ─────────────────────────────────────────────────────
   const handleSubmit = useCallback(() => {
@@ -155,8 +224,6 @@ export default function GameWrapper({
       didGuess:     guessRef.current !== null,
     })
   }, [target, timeTakenSec])
-  // Keep a stable ref so the keyboard handler can call handleNext without
-  // being in its dependency array (handleNext recreates on timeTakenSec changes).
   useEffect(() => { handleNextRef.current = handleNext }, [handleNext])
 
   const handleMapCreated = useCallback((map: mapboxgl.Map) => setMapInstance(map), [])
@@ -165,6 +232,7 @@ export default function GameWrapper({
   return (
     <div className="absolute inset-0">
       <GameMap
+        roundKey={roundKey}
         target={target}
         onReady={handleMapReady}
         onMapCreated={handleMapCreated}
@@ -175,6 +243,7 @@ export default function GameWrapper({
       {mapInstance && <ScaleBar map={mapInstance} />}
 
       <MiniMap
+        roundKey={roundKey}
         onGuess={handleGuess}
         onSubmit={handleSubmit}
         disabled={phase === 'result'}

@@ -33,6 +33,13 @@ const MODE_LABEL: Record<GameMode, string> = {
   urban:     'Urban',
   uncharted: 'Uncharted',
   terra:     'Terra',
+  islands:   'Islands',
+  mountains: 'Mountains',
+  volcanoes: 'Volcanoes',
+  usa:       'USA',
+  europe:    'Europe',
+  airports:  'Airports',
+  landmarks: 'Landmarks',
 }
 
 export default function SummaryOverlay({ results, totalRounds, gameMode, onPlayAgain }: SummaryOverlayProps) {

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import mapboxgl from 'mapbox-gl'
 
 const BAR_WIDTH_PX = 168
@@ -22,16 +22,21 @@ interface ScaleBarProps {
 }
 
 export default function ScaleBar({ map }: ScaleBarProps) {
-  const [label, setLabel] = useState('—')
+  const labelRef = useRef<HTMLSpanElement>(null)
 
   useEffect(() => {
+    // Write directly to the DOM — no React state, no re-renders.
+    // The map fires 'zoom' and 'move' at ~60 fps during the 20-second animation;
+    // calling setLabel on every event would trigger ~1 200 React renders and
+    // compete with Mapbox's own frame budget, causing visible jank.
     function update() {
+      if (!labelRef.current) return
       const { lat } = map.getCenter()
       const zoom    = map.getZoom()
       // Mapbox GL JS uses 512 px tiles, so the constant is half the classic 256 px value.
       // mpp = (2π × R_earth × cos(lat)) / (512 × 2^zoom)
       const mpp     = (78_271.517 * Math.cos((lat * Math.PI) / 180)) / 2 ** zoom
-      setLabel(formatDistance(mpp * BAR_WIDTH_PX))
+      labelRef.current.textContent = formatDistance(mpp * BAR_WIDTH_PX)
     }
     update()
     map.on('zoom', update)
@@ -53,19 +58,20 @@ export default function ScaleBar({ map }: ScaleBarProps) {
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
 
-        {/* Distance label */}
+        {/* Distance label — updated via ref, never causes a React render */}
         <span
+          ref={labelRef}
           style={{
-            color:            '#ffffff',
-            fontSize:         11,
-            fontWeight:       700,
-            letterSpacing:    '0.07em',
-            textShadow:       '0 1px 4px rgba(0,0,0,.95)',
+            color:              '#ffffff',
+            fontSize:           11,
+            fontWeight:         700,
+            letterSpacing:      '0.07em',
+            textShadow:         '0 1px 4px rgba(0,0,0,.95)',
             fontVariantNumeric: 'tabular-nums',
-            lineHeight:       1,
+            lineHeight:         1,
           }}
         >
-          {label}
+          —
         </span>
 
         {/* Alternating-stripe scale bar */}
