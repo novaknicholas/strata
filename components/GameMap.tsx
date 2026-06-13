@@ -4,12 +4,19 @@ import { useEffect, useRef } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { zoomForDistance } from '@/lib/haversine'
+import { mountPersistentMap, detachPersistentMap } from '@/lib/persistentMap'
+import { createMainMap, MAIN_MAP_KEY } from '@/lib/createMaps'
 
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!
 
 // ─── Zoom waypoints — evenly spaced over TOTAL_MS ──────────────────────────
 const ZOOMS    = [16, 14, 11, 6, 3.5] as const
-const TOTAL_MS = 20_000
+const TOTAL_MS = 30_000   // full round — slower zoom gives tiles more dwell time
+
+// Hard cap on the pre-round tile warm. The no-black floor loads first and in
+// well under a second; the rest of the budget fills the level pyramid in
+// consumption order, so a truncation only ever costs the lowest-priority tail.
+const LOAD_CAP_MS = 4_000
 
 // ─── Catmull-Rom spline through ZOOMS ──────────────────────────────────────
 function catmullRomZoom(t: number): number {
@@ -35,11 +42,29 @@ function catmullRomZoom(t: number): number {
 
 const START_ZOOM = ZOOMS[0]
 const END_ZOOM   = ZOOMS[ZOOMS.length - 1]
-const ZOOM_RANGE = START_ZOOM - END_ZOOM
 
-function zoomEasing(t: number): number {
-  const z = catmullRomZoom(t)
-  return Math.max(0, Math.min(1, (START_ZOOM - z) / ZOOM_RANGE))
+// Drift: final phase only — z6 → z3.5, the last quarter of the spline —
+// pans by up to ±3° lng / ±2° lat from the target. Subtle (a few percent of
+// the continental-scale viewport) but enough that the answer is never
+// pinned to the exact centre of the screen.
+const DRIFT_ZOOM     = ZOOMS[3]   // z6 — spline knot hit exactly at t = 0.75
+const DRIFT_T        = 0.75
+const MAX_DRIFT_LNG  = 3
+const MAX_DRIFT_LAT  = 2
+
+function clamp01(v: number): number {
+  return Math.max(0, Math.min(1, v))
+}
+
+// The animation is two chained easeTo calls split at the z6 knot, so drift
+// can ride only on the final phase. Each easing replays its part of the same
+// Catmull-Rom spline — the combined zoom trajectory is identical to a
+// single-easeTo version, including knot velocity at the seam.
+function zoomEasingMain(s: number): number {
+  return clamp01((START_ZOOM - catmullRomZoom(s * DRIFT_T)) / (START_ZOOM - DRIFT_ZOOM))
+}
+function zoomEasingDrift(s: number): number {
+  return clamp01((DRIFT_ZOOM - catmullRomZoom(DRIFT_T + s * (1 - DRIFT_T))) / (DRIFT_ZOOM - END_ZOOM))
 }
 
 interface ReplayInfo {
@@ -66,144 +91,238 @@ export default function GameMap({
   frozen,
   replayInfo,
 }: GameMapProps) {
-  const containerRef    = useRef<HTMLDivElement>(null)
-  const mapRef          = useRef<mapboxgl.Map | null>(null)
-  const onReadyRef      = useRef(onReady)
-  const onCreatedRef    = useRef(onMapCreated)
-  const targetRef       = useRef(target)          // stable ref for the [] creation effect
+  const containerRef     = useRef<HTMLDivElement>(null)
+  const mapRef           = useRef<mapboxgl.Map | null>(null)
+  const onReadyRef       = useRef(onReady)
+  const onCreatedRef     = useRef(onMapCreated)
+  const targetRef        = useRef(target)          // stable ref for the [] mount effect
   const resultMarkerRef  = useRef<mapboxgl.Marker | null>(null)  // answer pin (round-end)
-  const fallbackRef      = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const activeVisitorRef = useRef<(() => void) | null>(null)     // current waterfall step fn
+  const loadSeqRef       = useRef(0)               // invalidates in-flight load sequences
+  const waiterCleanupRef = useRef<(() => void) | null>(null)
+  const capTimerRef      = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const driftTimerRef    = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => { onReadyRef.current   = onReady      }, [onReady])
   useEffect(() => { onCreatedRef.current = onMapCreated }, [onMapCreated])
   useEffect(() => { targetRef.current    = target       }, [target])
 
-  // ── Shared animation starter ──────────────────────────────────────────────
-  // Pre-loads tiles at each animation waypoint zoom level while the loading
-  // screen is still up, then starts the zoom-out easeTo. Because Mapbox only
-  // fetches tiles for the current viewport, the only way to guarantee tiles at
-  // zoom 11 are cached is to briefly visit zoom 11 — the loading screen covers
-  // all these invisible jumps. Each lower zoom level loads in <500 ms (CDN-warm,
-  // large-area tiles), so the loading screen extends by only ~1-2 s total.
+  // ── Warm-then-animate loader ──────────────────────────────────────────────
+  // Visits a priority-ordered list of camera states behind the loading screen
+  // so every tile the round needs is cached before play begins:
   //
-  // Uses a named-function sequential waterfall (not nested once() callbacks) so
-  // any in-flight preload can be cleanly cancelled when Effect B resets the map.
+  //   1. END state (z3.5 @ drifted centre) — the NO-BLACK FLOOR. The end
+  //      viewport geographically contains every frame of the flight, so once
+  //      its tiles exist, every later frame has a loaded ancestor and black
+  //      tiles are structurally impossible.
+  //   2. START view (z16 @ target) — the opening frame, sharp.
+  //   3. Half-zoom fill, 15.5 → 4.5, each centred on the camera's actual
+  //      position when that level displays widest (raster sources round
+  //      fractional zoom, so z = N−0.5 is level N+1's widest moment; during
+  //      the drift phase the centre interpolates toward endCenter).
+  //   4. Frozen-reveal floor (z2.5, z1.8) — levels shown by the result
+  //      zoom-out to the globe.
+  //
+  // Steps advance on areTilesLoaded() (faster than 'idle' — no render
+  // settling), under a LOAD_CAP_MS adaptive cap: normal connections finish
+  // the whole list; slow ones start anyway with the floor guarantee intact.
+  // The tab-lifetime tile cache makes rounds after the first mostly instant.
   const triggerAnimation = (map: mapboxgl.Map) => {
-    if (fallbackRef.current) clearTimeout(fallbackRef.current)
+    const seq = ++loadSeqRef.current
+    waiterCleanupRef.current?.()
+    if (capTimerRef.current)   { clearTimeout(capTimerRef.current);   capTimerRef.current   = null }
+    if (driftTimerRef.current) { clearTimeout(driftTimerRef.current); driftTimerRef.current = null }
 
-    // Cancel any waterfall still running from a previous triggerAnimation call
-    if (activeVisitorRef.current) {
-      map.off('idle', activeVisitorRef.current)
-      activeVisitorRef.current = null
+    // Hide the canvas while the loader jumps around (loading overlay covers
+    // it too — this guards against that ever becoming translucent).
+    if (containerRef.current) containerRef.current.style.opacity = '0'
+
+    const target: [number, number] = [targetRef.current.lng, targetRef.current.lat]
+    const endCenter: [number, number] = [
+      target[0] + (Math.random() * 2 - 1) * MAX_DRIFT_LNG,
+      Math.max(-85, Math.min(85, target[1] + (Math.random() * 2 - 1) * MAX_DRIFT_LAT)),
+    ]
+
+    // Camera centre when the map zoom passes z (pan is linear in zoom
+    // within the drift easeTo; zero pan before the drift phase).
+    const centerAt = (z: number): [number, number] => {
+      const p = z >= DRIFT_ZOOM ? 0 : (DRIFT_ZOOM - z) / (DRIFT_ZOOM - END_ZOOM)
+      return [
+        target[0] + (endCenter[0] - target[0]) * p,
+        target[1] + (endCenter[1] - target[1]) * p,
+      ]
     }
 
-    let fired = false
+    // Ordered by how VISIBLE each stop's failure would be, so a cap
+    // truncation always costs the least-noticeable tail:
+    //   floors first (black / coarse-globe prevention), then the opening
+    //   frame, then mid/low fills (failure = glaring coarse fallback at mid
+    //   zoom), and the two highest fills last — their failure window is the
+    //   animation's opening seconds where zoom velocity ≈ 0 and the edge
+    //   reveal rate is sub-pixel, so live-loading there is nearly invisible.
+    const stops: { zoom: number; center: [number, number] }[] = [
+      { zoom: END_ZOOM,   center: endCenter },   // animation floor — black impossible after this
+      { zoom: 2.5,        center: endCenter },   // result-globe floor
+      { zoom: 1.8,        center: endCenter },   // result-globe floor (usually menu-warmed)
+      { zoom: START_ZOOM, center: target },      // opening frame
+    ]
+    for (let z = START_ZOOM - 2.5; z > END_ZOOM; z -= 1) {
+      stops.push({ zoom: z, center: centerAt(z) })          // mid/low pyramid fill
+    }
+    stops.push({ zoom: START_ZOOM - 0.5, center: centerAt(START_ZOOM - 0.5) })  // high fills last
+    stops.push({ zoom: START_ZOOM - 1.5, center: centerAt(START_ZOOM - 1.5) })
 
-    function startAnim() {
-      if (fired) return; fired = true
-      activeVisitorRef.current = null
-      if (fallbackRef.current) { clearTimeout(fallbackRef.current); fallbackRef.current = null }
+    let done = false
+
+    const finish = () => {
+      if (done || loadSeqRef.current !== seq) return
+      done = true
+      waiterCleanupRef.current?.()
+      if (capTimerRef.current) { clearTimeout(capTimerRef.current); capTimerRef.current = null }
+
+      map.jumpTo({ center: target, zoom: START_ZOOM })
+      if (containerRef.current) containerRef.current.style.opacity = '1'
       onReadyRef.current?.()
-      map.easeTo({ zoom: END_ZOOM, duration: TOTAL_MS, easing: zoomEasing })
+
+      // Main phase: pure centred zoom-out, z16 → z6
+      map.easeTo({
+        center:   target,
+        zoom:     DRIFT_ZOOM,
+        duration: TOTAL_MS * DRIFT_T,
+        easing:   zoomEasingMain,
+      })
+
+      // Drift phase: z6 → z3.5 panning to the drifted centre. easeTo always
+      // starts from the live camera state, so a few ms of timer slop cannot
+      // cause a jump. Cleared if the round ends or resets first.
+      driftTimerRef.current = setTimeout(() => {
+        driftTimerRef.current = null
+        map.easeTo({
+          center:   endCenter,
+          zoom:     END_ZOOM,
+          duration: TOTAL_MS * (1 - DRIFT_T),
+          easing:   zoomEasingDrift,
+        })
+      }, TOTAL_MS * DRIFT_T)
     }
 
-    // Waypoints that mirror the animation's own zoom knots — every tile the
-    // camera will pass through is guaranteed to be in cache before play starts.
-    const PRELOAD = [14, 11, 6, END_ZOOM]
-    let step = 0
+    // Advance when the current viewport's tiles are loaded.
+    //
+    // CRITICAL ordering detail: Mapbox recomputes tile coverage during the
+    // first render AFTER a camera change. Calling areTilesLoaded()
+    // synchronously after jumpTo reads the PREVIOUS viewport's state (all
+    // loaded) and advances instantly — collapsing the whole warm sequence
+    // into a no-op. So the first check is gated behind one 'render' event.
+    const waitTiles = (cb: () => void) => {
+      let sawRender = false
+      const check = () => {
+        if (loadSeqRef.current !== seq) { cleanup(); return }
+        if (!sawRender) return
+        if (map.areTilesLoaded())       { cleanup(); cb() }
+      }
+      const onRender = () => { sawRender = true; check() }
+      const cleanup = () => {
+        map.off('sourcedata', check)
+        map.off('render', onRender)
+        waiterCleanupRef.current = null
+      }
+      waiterCleanupRef.current = cleanup
+      map.on('sourcedata', check)
+      map.on('render', onRender)
+      map.triggerRepaint()   // guarantee a render even if the stop is fully cached
+    }
 
-    function visitNext() {
-      if (fired) return
-      if (step >= PRELOAD.length) {
-        // All waypoints visited — snap back to start zoom and begin
-        activeVisitorRef.current = null
-        map.jumpTo({ zoom: START_ZOOM })
-        startAnim()
+    const t0 = performance.now()
+    let i = 0
+    const visitNext = () => {
+      if (done || loadSeqRef.current !== seq) return
+      if (i >= stops.length) {
+        console.debug(`[strata] warm complete: ${stops.length} stops in ${Math.round(performance.now() - t0)} ms`)
+        finish()
         return
       }
-      map.jumpTo({ zoom: PRELOAD[step++] })
-      activeVisitorRef.current = visitNext   // keep ref current for cancellation
-      map.once('idle', visitNext)
+      const s = stops[i++]
+      const tStop = performance.now()
+      map.jumpTo({ zoom: s.zoom, center: s.center })
+      waitTiles(() => {
+        console.debug(`[strata] warm stop ${i}/${stops.length} z${s.zoom} in ${Math.round(performance.now() - tStop)} ms`)
+        visitNext()
+      })
     }
 
-    // Phase 1: wait for z16 tiles, then walk the waterfall
-    activeVisitorRef.current = visitNext
-    map.once('idle', visitNext)
+    const startCap = () => {
+      capTimerRef.current = setTimeout(() => {
+        if (loadSeqRef.current !== seq) return
+        // Hidden tab: rAF is frozen, so the warm can't advance (it steps on
+        // render events) — burning the cap now would start the round cold.
+        // Re-arm and wait for the tab to come back.
+        if (document.hidden) { startCap(); return }
+        console.debug(`[strata] warm CAP hit at stop ${i}/${stops.length} — starting anyway`)
+        finish()
+      }, LOAD_CAP_MS)
+    }
 
-    // Safety: if any step stalls beyond 10 s, skip preload and start anyway
-    const t = setTimeout(() => {
-      if (activeVisitorRef.current) {
-        map.off('idle', activeVisitorRef.current)
-        activeVisitorRef.current = null
-      }
-      map.jumpTo({ zoom: START_ZOOM })
-      startAnim()
-    }, 10_000)
-    fallbackRef.current = t
+    const begin = () => {
+      if (loadSeqRef.current !== seq) return
+      startCap()
+      visitNext()
+    }
+    if (map.isStyleLoaded()) begin()
+    else map.once('style.load', begin)
   }
 
-  // ── Effect A: create map once, destroy on session end ────────────────────
-  // Deps: [] — runs exactly once on mount, cleanup on unmount.
-  // Uses targetRef so the closure always reads the current target coords.
+  // ── Effect A: mount the tab-lifetime map ─────────────────────────────────
+  // The Map is constructed once per tab (one map-load credit, ever) and only
+  // DETACHED on unmount — menu visits and new games reattach the same
+  // instance with its tile cache intact.
   useEffect(() => {
     if (!containerRef.current) return
 
-    const map = new mapboxgl.Map({
-      container:          containerRef.current,
-      style:              'mapbox://styles/mapbox/satellite-v9',
-      center:             [targetRef.current.lng, targetRef.current.lat],
-      zoom:               START_ZOOM,
-      interactive:        false,
-      attributionControl: false,
-      fadeDuration:       300,  // smooth tile cross-fade during zoom-out (0 caused tile pops)
-      logoPosition:       'bottom-right',
-      // Larger tile cache keeps more zoom levels resident during the animation,
-      // reducing re-fetches as the camera sweeps from z16 → z3.5.
-      maxTileCacheSize:   300,
-    })
+    // Normally created earlier by MapPrewarm (menu); direct creation here is
+    // the fallback if a game starts without the menu having mounted.
+    const { map, created } = mountPersistentMap(MAIN_MAP_KEY, containerRef.current, el =>
+      createMainMap(el, [targetRef.current.lng, targetRef.current.lat], START_ZOOM)
+    )
+    if (!created) map.stop()   // reattached — cancel whatever it was doing
 
-    map.addControl(new mapboxgl.AttributionControl({ compact: true }), 'bottom-left')
     onCreatedRef.current?.(map)
     mapRef.current = map
     triggerAnimation(map)
 
     return () => {
-      if (fallbackRef.current)     clearTimeout(fallbackRef.current)
-      if (activeVisitorRef.current) map.off('idle', activeVisitorRef.current)
-      map.remove()
+      loadSeqRef.current++             // invalidate any in-flight loader
+      waiterCleanupRef.current?.()
+      if (capTimerRef.current)   clearTimeout(capTimerRef.current)
+      if (driftTimerRef.current) clearTimeout(driftTimerRef.current)
+      resultMarkerRef.current?.remove()
+      resultMarkerRef.current = null
+      map.stop()
+      detachPersistentMap(MAIN_MAP_KEY)   // detach, never remove() — tab-lifetime
       mapRef.current = null
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Effect B: reset map in-place on round change ─────────────────────────
+  // ── Effect B: reset in-place on round change ─────────────────────────────
   // Deps: [target] — fires after GameWrapper's [roundKey] effect has called
-  // setTarget(newLoc) and that state update has committed (render #2).
-  // This guarantees target.lng/lat are the NEW round's coordinates, not the
-  // previous round's stale values that were in scope during render #1.
+  // setTarget(newLoc) and that state update has committed (render #2), so
+  // the coordinates here are always the NEW round's.
   const isFirstRound = useRef(true)
   useEffect(() => {
     if (isFirstRound.current) { isFirstRound.current = false; return }
     const map = mapRef.current
     if (!map) return
 
-    // Cancel zoom-out / result flyTo from the previous round
     map.stop()
-
-    // Remove the answer marker placed at round end
     resultMarkerRef.current?.remove()
     resultMarkerRef.current = null
-
-    // Snap to new location at full zoom — no animation so there's no visual transition
-    map.jumpTo({ center: [target.lng, target.lat], zoom: START_ZOOM })
-
-    // Re-arm the idle listener and start the new round's zoom-out
     triggerAnimation(map)
   }, [target]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Freeze: zoom out to show globe when result is shown ──────────────────
   useEffect(() => {
     if (!frozen || !mapRef.current) return
+    // Round ended — kill a pending drift-phase easeTo so it can't yank the
+    // camera after the result view takes over (guess made before 22.5 s).
+    if (driftTimerRef.current) { clearTimeout(driftTimerRef.current); driftTimerRef.current = null }
     mapRef.current.easeTo({
       zoom:     1.8,
       duration: 1_400,

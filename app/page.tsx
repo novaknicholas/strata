@@ -7,6 +7,7 @@ import GameWrapper          from '@/components/GameWrapper'
 import type { GameMode, RoundResult } from '@/lib/types'
 
 const SummaryOverlay = dynamic(() => import('@/components/SummaryOverlay'), { ssr: false })
+const MapPrewarm     = dynamic(() => import('@/components/MapPrewarm'),     { ssr: false })
 
 const TOTAL_ROUNDS   = 5
 const GAME_DURATION  = 30
@@ -60,7 +61,12 @@ export default function Home() {
         />
       )}
 
-      {gamePhase === 'menu' && <MainMenu onPlay={handlePlay} />}
+      {gamePhase === 'menu' && (
+        <>
+          <MapPrewarm />
+          <MainMenu onPlay={handlePlay} />
+        </>
+      )}
 
       {gamePhase === 'summary' && (
         <SummaryOverlay

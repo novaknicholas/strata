@@ -41,13 +41,16 @@ strata/
 │   ├── ScaleBar.tsx        # Bottom-left scale bar — DOM-direct updates (no React state on map events)
 │   ├── ResultOverlay.tsx   # Per-round result card — score count-up, distance, location name
 │   ├── SummaryOverlay.tsx  # End-of-game overlay — all 5 rounds, animated total, grade, share
-│   ├── MainMenu.tsx        # Mode selection grid (2×5, 10 tiles)
+│   ├── MainMenu.tsx        # Deep-space satellite bento menu — 4×4 grid, popularity badges, accent
+│   ├── MapPrewarm.tsx      # Behind the menu — creates both tab-lifetime maps during mode select
 │   └── StartScreen.tsx     # Intro screen — title, difficulty selector, personal best
 │
 ├── lib/
 │   ├── types.ts            # GameMode union, GameLocation interface, RoundResult interface
 │   ├── getGameLocation.ts  # Mode router — returns GameLocation for any mode
 │   ├── haversine.ts        # haversineKm(), calcScore(), zoomForDistance()
+│   ├── createMaps.ts       # Shared Mapbox constructors (main satellite + minimap) + cache/fade patches
+│   ├── persistentMap.ts    # Tab-lifetime map holders — mount/detach, never remove()
 │   ├── randomLandPoint.ts  # Terra mode — rejection-sample random land coordinate
 │   ├── randomUnchartedPoint.ts  # Uncharted mode — random point excluding urban areas
 │   ├── randomUrbanPoint.ts # Legacy (unused — urban mode now uses cities50k.json)
@@ -61,7 +64,10 @@ strata/
 │       ├── airports.json   # 1,160 large civilian airports — [name, lat, lng, cc, municipality][]  (81 KB)
 │       └── landmarks.json  # 80 handcrafted landmarks — [name, lat, lng][]  (3 KB)
 │
-├── public/images/          # 10 JPG tile images for MainMenu (one per mode)
+├── scripts/
+│   └── capture-tiles.mjs   # One-time HD satellite tile capture (Mapbox Static Images API → sharp)
+│
+├── public/images/          # 10 HD satellite tile JPGs for MainMenu (iconic location per mode)
 │
 ├── CHANGELOG.txt           # Reverse-chronological change log
 ├── PROJECT_STATUS.md       # This file
@@ -157,8 +163,9 @@ Divisor was tuned from 20 → 30 to make mid-range guesses feel rewarding.
 ## API Cost Optimizations
 
 ### Mapbox Map Loads
-- **Before:** `key={roundKey}` on GameWrapper → full remount → 2 loads/round → 10 loads/game
-- **After:** Persistent instances, in-place reset → **2 loads per game session**
+- **Originally:** `key={roundKey}` on GameWrapper → full remount → 2 loads/round → 10 loads/game
+- **Then:** persistent instances per game session → 2 loads per game
+- **Now:** tab-lifetime singletons (`lib/persistentMap.ts`) → **2 loads per tab, total**, however many games are played
 
 ### Mapbox Geocoding (Reverse-Geocode)
 - **Before:** Every mode called Mapbox Geocoding API every round
@@ -170,9 +177,17 @@ Tile requests are included within the Mapbox Map Load session — prefetching an
 
 ---
 
+## Map Persistence (tab-lifetime singletons)
+
+Both Mapbox instances are **constructed once per tab** via `lib/persistentMap.ts`: the Map lives in a module-owned holder div; React unmounts only *detach* the holder from the DOM (never `map.remove()`), and the next mount re-appends it and calls `map.resize()`. Consequences:
+
+- **2 map-load credits per tab total** (main + minimap), no matter how many games are played.
+- **Tile caches survive across games** — continental-scale tiles warmed in game 1 round 1 are still cached in game 5; warming gets faster the longer the tab lives.
+- Event handlers that capture per-component-instance refs (MiniMap's click handler) are rebound on every mount and removed on unmount. Markers/lines are cleaned up on unmount *before* detaching, and again defensively on reattach.
+
 ## Zoom-Out Animation
 
-The main map zooms from zoom 16 → 3.5 over 20 seconds using `map.easeTo()` with a custom Catmull-Rom easing function through waypoints `[16, 14, 11, 6, 3.5]`.
+The main map zooms from zoom 16 → 3.5 over **30 seconds (the full round)** using `map.easeTo()` with a custom Catmull-Rom easing function through waypoints `[16, 14, 11, 6, 3.5]`. The slower zoom doubles as loading slack — each tile level stays on screen longer, so any straggler tile resolves long before it nears the screen edge.
 
 ### Easing function
 ```ts
@@ -183,14 +198,38 @@ const p = (j) => j < 0 ? ZOOMS[-j] : j > n ? ZOOMS[2*n - j] : ZOOMS[j]
 
 The `zoomEasing(t)` function maps t→[0,1] so `easeTo` linearly interpolates zoom space, but the camera follows the Catmull-Rom curve.
 
-### Tile preload waterfall
-During the loading screen, before the game starts, `triggerAnimation` visits each animation waypoint zoom level sequentially to pre-cache tiles:
+### Two-phase animation + drift (original drift restored)
+The 30s animation is **two chained `easeTo` calls split at the z6 spline knot** (t = 0.75 → 22.5s). Each phase replays its part of the same Catmull-Rom spline (`zoomEasingMain` / `zoomEasingDrift`), so the combined zoom trajectory — including velocity at the seam — is identical to a single-easeTo version.
 
-```
-z16 idle → jumpTo(z14) → idle → jumpTo(z11) → idle → jumpTo(z6) → idle → jumpTo(z3.5) → idle → jumpTo(z16) → startAnim()
-```
+- **Main phase (0–22.5s):** pure centred zoom-out, z16 → z6.
+- **Drift phase (22.5–30s):** z6 → z3.5 panning to a per-round random end centre offset by up to **±3° lng / ±2° lat** from the target (uniform, lat clamped to ±85°). A few percent of the continental viewport — subtle, but the answer is never pinned to the exact centre of the screen.
 
-All jumps happen while the loading screen is up (user sees only the spinner). Lower zoom tiles are CDN-warm large-area tiles; each step typically takes <500ms. Total extra loading: ~1–2 seconds.
+The drift-phase starter lives in `driftTimerRef` and is cleared on round reset, unmount, and when `frozen` becomes true (a guess made before 22.5s would otherwise let the pending drift `easeTo` yank the camera during the result view). `easeTo` always starts from the live camera state, so the chain seam cannot jump even if timing is a few ms off.
+
+### Warm-then-animate loader (floor-first)
+Behind the loading screen, `triggerAnimation` visits a **priority-ordered** list of camera states and advances when `map.areTilesLoaded()` reports ready (faster than waiting for `idle`):
+
+1. **END state** (z3.5 @ drifted centre) — the **no-black floor**. The continental end viewport geographically contains every frame of the flight, so once its tiles are cached, every later frame has a loaded ancestor and black tiles are structurally impossible — on any connection.
+2. **START view** (z16 @ target) — the opening frame, sharp.
+3. **Half-zoom pyramid fill**, 15.5 → 4.5 in consumption order, each centred on the camera's actual position when that level displays widest. (Raster sources *round* fractional zoom, so z = N−0.5 is a level's widest display moment; during the drift phase the centre interpolates toward `endCenter`.)
+4. **Frozen-reveal floor** (z2.5, z1.8) — the levels shown by the result-screen globe zoom.
+
+An **adaptive 4-second cap** (`LOAD_CAP_MS`) covers the whole list: normal connections finish everything (guaranteed-perfect animation); slow connections start anyway, and because the list is priority-ordered, a truncation can only cost the lowest-priority tail — never the floor. The cap **re-arms while `document.hidden`** (rAF is frozen in hidden tabs, so the warm can't advance — burning the cap would start the round cold). Cancellation is by sequence token (`loadSeqRef`), checked by every async step.
+
+**Three hard-won implementation facts (do not regress these):**
+1. **`areTilesLoaded()` must not be checked synchronously after `jumpTo`** — tile coverage updates on the *next render*, so a synchronous check reads the previous viewport's state (all loaded) and skips the stop entirely. The first check is gated behind one `'render'` event, with `triggerRepaint()` to guarantee a render for fully-cached stops.
+2. **Mapbox hard-clamps each source's tile LRU to viewportTiles×5 (≈40 tiles)** in `SourceCache#updateCacheSize`; the public `maxTileCacheSize` option is `Math.min`'ed against it and can only shrink the cache. 40 tiles cannot hold a 16-level pyramid, so warmed tiles were silently evicted before display and re-fetched mid-animation (visible as mixed-vintage rectangles — different zoom levels have different imagery color grading). `createMainMap` overrides the private `updateCacheSize` per source cache on `style.load` to pin `tilesPerLevel × 16 × 1.3`.
+3. **`raster-fade-duration: 0` triggers permanent descendant retention.** `Tile#registerFadeDuration(0)` early-returns without setting `fadeEndTime`; `SourceCache#update` treats undefined `fadeEndTime` as "still fading" forever and permanently retains every loaded descendant of every ideal tile, which the painter draws on top (stencil prefers higher-res) — a centre rectangle of different imagery vintage at low zooms. Fixed by setting `_supportsFading = false` per source cache, which skips the fade-retention machinery entirely (with zero fade there is nothing to fade).
+
+**Both private-API patches live in `createMainMap`'s `style.load` handler — verified against mapbox-gl 3.24; re-verify on any mapbox-gl upgrade.**
+
+Because the map is tab-lifetime, rounds after the first reuse continental tiles. `MapPrewarm` (rendered behind the menu) creates both maps during mode selection, so style/worker init and the world floor are already done when round 1 begins. Large screens follow the GeoGuessr model: native quality, proportionally larger cache, no artificial downscaling. Warm telemetry logs to the console as `[strata] warm stop N/16 …` in dev.
+
+**`maxTileCacheSize` is computed from canvas size at map construction** — `(w/256+2)·(h/256+2) × 14 levels × 1.3 margin` (~1,270 tiles on 1080p, ~3,400 on 4K, ~440 on a phone). The cache must hold the *entire* warmed pyramid until the animation consumes it; any fixed value silently re-introduces LRU eviction (= black edges) on screens larger than it was tuned for. (Zoom-*in* never has this problem: it only reveals areas already covered by loaded parent tiles. Zoom-*out* reveals virgin area every frame and depends entirely on the warmed cache surviving.)
+
+**Raster fade is zeroed via the `raster-fade-duration` paint property — NOT the Map `fadeDuration` option.** The Map-level `fadeDuration` only affects symbol/label fading; raster tile fade is a paint property on the raster layer, and satellite-v9 ships with a 300ms default. Mapbox restarts a tile's fade-from-transparent whenever it (re-)enters the render set — *even warmed, cached tiles* — and at the expanding edge of a zoom-out nothing renders beneath the fading tile, so that default painted a translucent ring at the screen edges regardless of preloading. `GameMap` zeroes `raster-fade-duration` on every raster layer in a `style.load` handler. If a straggler tile ever pops visibly on a bad connection, the dial is a small value on this paint property (~100ms), never 300+.
+
+**Drift magnitude:** ±3° lng / ±2° lat (uniform, per round) — a few percent of the continental-scale end viewport; subtle, but the answer is never pinned to the exact centre of the screen.
 
 A named-function sequential waterfall (not nested `once()` callbacks) is used so `activeVisitorRef` can cancel an in-flight waterfall when Effect B resets the map for a new round.
 

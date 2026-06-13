@@ -3,6 +3,255 @@ STRATA — CHANGELOG
 Reverse-chronological. Each entry covers one logical change session.
 
 
+[2026-06-13] Homepage visual redesign — deep-space / satellite bento
+----------------------------------------------------------------------
+Full visual redesign of the main menu (no game logic touched).
+ADDED    scripts/capture-tiles.mjs — one-time HD satellite tile capture via
+         the Mapbox Static Images API. Reads NEXT_PUBLIC_MAPBOX_TOKEN from
+         .env.local (never printed); sends Referer: http://localhost:3000/
+         because the token is URL-restricted in the dashboard (plain
+         server fetch → 403). Optimises each still to a ≤1600px JPEG with
+         sharp. Locations: Manhattan (urban), Richat Structure (terra),
+         Grand Canyon (usa), Bora Bora (islands), Everest (mountains),
+         Fuji (volcanoes), Venice (europe), SFO (airports), Giza
+         (landmarks), Namib/Sossusvlei (uncharted). Re-run to refresh.
+CHANGED  public/images/*.jpg — replaced all 10 placeholders with the above.
+CHANGED  app/layout.tsx — added Space_Grotesk display font (--font-display);
+         Geist stays for body.
+CHANGED  app/globals.css — menu design system: --accent (clay-orange) tokens,
+         tileIn keyframe, .sx-* classes. Deep-space backdrop (CSS starfield +
+         atmospheric Earth-limb glow + night gradient, fixed to the scroll
+         box). 4-col bento that tiles to a clean 4x4 (Terra 2x2 hero; Urban,
+         USA, Mountains 2x1; six 1x1), collapsing to 2-col on iPhone. CSS
+         :hover image-zoom + accent glow (hover:hover only, so touch shows
+         the resting state). Custom accent tab + focus-visible states.
+CHANGED  components/MainMenu.tsx — rebuilt: left-aligned editorial title,
+         popularity hierarchy (Urban "Most popular", Terra "Featured", USA
+         "Popular"), per-tile coordinate-marker glyph, descriptions on
+         hero/wide tiles only, best-score pill, "Imagery © Mapbox · Maxar"
+         credit, staggered tile entrance. <button> tiles for a11y. Full
+         safe-area insets. Verified: 4x4 desktop + 2-col mobile, font
+         loaded, 10 imgs, no console errors.
+
+
+[2026-06-12] Centre-rectangle fix: zero fade caused permanent tile stacking
+-----------------------------------------------------------------------------
+The last aesthetic bug: at low zooms a centre rectangle of slightly
+different texture/hue. Mechanism (read from mapbox-gl-dev.js source):
+with raster-fade-duration 0, Tile#registerFadeDuration computes
+fadeEndTime = timeAdded + 0 < now and EARLY-RETURNS without setting
+fadeEndTime. SourceCache#update treats undefined fadeEndTime as "still
+fading" forever and permanently retains every loaded DESCENDANT of every
+ideal tile; the painter draws descendants on top (stencil prefers
+higher-res). High-zoom imagery (different vintage/colour grading) was
+therefore permanently stacked in the screen centre at low zooms.
+
+CHANGED  lib/createMaps.ts — set _supportsFading = false on every source
+         cache (same private-API patch block as the cache-size override).
+         Skips the fade-retention machinery entirely; with zero fade there
+         is nothing to fade, and edges keep instant full vibrancy.
+         Live-verified: in-use tile set at low zoom is now the ideal level
+         only (was a 15-level stack).
+
+
+[2026-06-12] ROOT CAUSE FOUND: Mapbox clamps tile cache to ~40 tiles
+----------------------------------------------------------------------
+Verified by playing live (preview browser + tile-state dumps): Mapbox
+hard-clamps every source's tile LRU to viewportTiles×5 (≈40 tiles) inside
+SourceCache#updateCacheSize. The maxTileCacheSize option is Math.min'ed
+against that and can only SHRINK the cache. Consequence: EVERY warming
+strategy in this saga worked correctly and was then silently evicted within
+seconds — warmed tiles re-fetched mid-animation (HTTP cache, 100-400 ms
+decode window) appearing as mixed-vintage tile rectangles / soft edges.
+
+CHANGED  lib/createMaps.ts — override SourceCache#updateCacheSize (private
+         API, verified against mapbox-gl 3.24, re-verify on upgrade) on
+         style.load to pin the cache at tilesPerLevel × 16 levels × 1.3.
+         Live-verified: LRU holds the full pyramid; previously-broken zoom
+         ranges render flawlessly edge to edge.
+CHANGED  components/GameMap.tsx
+         - Fixed warm-sequencing bug: areTilesLoaded() was checked
+           synchronously after jumpTo, but coverage updates on the next
+           render — the check read the PREVIOUS stop's state and blasted
+           through all 16 stops in ms, warming nothing. First check now
+           gated behind one 'render' event (+ triggerRepaint for cached
+           stops).
+         - Warm stops reordered by failure visibility: floors (3.5 / 2.5 /
+           1.8) → opening frame (16) → mid/low fills (13.5 → 4.5) → high
+           fills (15.5, 14.5) last, whose failure window is the near-zero
+           reveal rate of the opening seconds.
+         - Cap re-arms while document.hidden (rAF frozen = warm can't
+           advance; burning the cap would start the round cold).
+         - console.debug warm telemetry ([strata] warm stop N/16 …).
+ADDED    components/MapPrewarm.tsx — at the menu, creates both tab-lifetime
+         maps hidden behind the UI (style/worker init + world floor tiles
+         load during mode selection; round 1 starts hot).
+ADDED    lib/createMaps.ts — shared map constructors (config in one place
+         for MapPrewarm + GameMap/MiniMap fallback creation).
+CHANGED  app/page.tsx — renders MapPrewarm during the menu phase.
+
+
+[2026-06-12] Map loading rework: tab-lifetime maps + floor-first warming
+--------------------------------------------------------------------------
+ADDED    lib/persistentMap.ts — tab-lifetime Mapbox singletons.
+         Maps are constructed once per key inside a module-owned holder div;
+         component unmounts DETACH the canvas instead of map.remove(), and
+         the next mount re-appends it. One map-load credit per map per TAB
+         (2 total: main + mini), regardless of how many games are played.
+         Tile caches survive across games.
+CHANGED  components/GameMap.tsx — warm-then-animate loader (rewrite)
+         - Floor-first stop order: (1) END state z3.5 @ drifted centre —
+           the end viewport contains every frame of the flight, so once its
+           tiles are cached black tiles are structurally impossible;
+           (2) START view z16; (3) half-zoom pyramid fill 15.5 → 4.5 along
+           the camera path, in consumption order; (4) frozen-reveal floor
+           (z2.5, z1.8) for the result globe zoom.
+         - Steps advance on areTilesLoaded() (faster than 'idle' — skips
+           render settling), guarded by a load sequence token.
+         - Adaptive cap: LOAD_CAP_MS = 4 000. Normal connections finish the
+           full list; slow ones start anyway — a truncation can only cost
+           the lowest-priority tail, never the floor.
+         - Zoom-out stretched to the full round: TOTAL_MS 20 s → 30 s.
+           Drift phase now starts at 22.5 s. Slower zoom = longer dwell per
+           level, so any straggler resolves before it nears the screen edge.
+         - 4K/large screens: native quality (GeoGuessr model — no artificial
+           downscaling); tile cache scales with viewport (≈16 levels × 1.3).
+CHANGED  components/MiniMap.tsx — uses the same persistent-map pattern.
+         Click handlers rebound per component instance (they capture
+         per-instance refs); leftover result line/markers wiped on reattach
+         and on unmount before detaching.
+
+
+[2026-06-12] Real raster fade knob found: raster-fade-duration paint prop
+---------------------------------------------------------------------------
+CHANGED  components/GameMap.tsx
+         - The Map-level fadeDuration option only governs SYMBOL fading —
+           raster tile fade is the raster LAYER's `raster-fade-duration`
+           paint property (satellite-v9 default: 300 ms). Every prior fade
+           adjustment was therefore a no-op for the satellite imagery; the
+           translucent edge tiles (most visible ~15 s in, when the drift
+           phase reveals fresh ground) were this style default all along.
+           Now zeroed on style.load for every raster layer. Mapbox restarts
+           a tile's fade whenever it (re-)enters the render set even if
+           warmed and cached, so preloading alone could never fix this.
+         - Drift reduced: ±10° lng / ±6° lat → ±3° / ±2°.
+
+
+[2026-06-12] Dark edge ring fixed: fade removed, cache scales with screen
+---------------------------------------------------------------------------
+CHANGED  components/GameMap.tsx
+         - fadeDuration 300 → 0. Root cause of the dark/desaturated edge
+           tiles: Mapbox fades EVERY raster tile in from transparent when it
+           enters the render set — including warmed, cached tiles. At the
+           expanding edge of a zoom-out nothing renders beneath the fading
+           tile, so the fade painted a dim ring at the screen edges for the
+           entire animation. Screen centre never shows it (old-level tiles
+           render beneath = true cross-fade). With the pyramid fully
+           preloaded, fade serves no purpose: cached tiles appear at full
+           vibrancy on the frame the camera reveals them. Fade was only ever
+           needed for late network arrivals, which the ladder eliminated.
+           Side benefit: ladder steps no longer wait out fades → faster
+           loading screen.
+         - maxTileCacheSize: fixed 1536 → computed from canvas size at map
+           construction ((w/256+2)·(h/256+2) × 14 levels × 1.3 margin).
+           The pyramid scales with the viewport; the fixed value silently
+           re-introduced eviction (black edges) on large/4K windows.
+           ~1 270 tiles on 1080p, ~3 400 on 4K, ~440 on a phone.
+
+
+[2026-06-12] Preload ladder follows the animation camera path
+---------------------------------------------------------------
+CHANGED  components/GameMap.tsx
+         - Ladder steps now warm each level at the camera's actual position
+           when that level is displayed at its widest — not centred on the
+           target. During the drift phase (z6 → 3.5) the camera pans toward
+           endCenter; target-centred warming left an unwarmed strip on the
+           leading edge of the pan (levels 6-7), which loaded mid-animation
+           and faded in at low opacity. Pan progress is linear in zoom
+           within the drift easeTo, so the warm path is computed exactly.
+         - fadeDuration 450 → 300: long fades make any tile that does load
+           mid-animation glow in dimly (reads like a black tile). 300
+           balances crossover masking against fresh-load visibility.
+
+
+[2026-06-12] Tile cache sized to hold the full warmed pyramid
+---------------------------------------------------------------
+CHANGED  components/GameMap.tsx
+         - maxTileCacheSize 512 → 1536. Satellite tiles are 256 px, so a
+           desktop viewport is ~60-80 tiles per level; the 13-level preload
+           pyramid is ~800-1 000 tiles. At 512 the LRU evicted the
+           first-warmed (high-zoom) levels before the animation began —
+           black edges at animation start despite a completed ladder.
+           Zoom-IN never shows this because it only reveals areas already
+           covered by loaded parent tiles; zoom-OUT reveals virgin area
+           every frame and depends entirely on the cache surviving.
+         - fadeDuration 300 → 450 — longer cross-fade masks the inherent
+           raster resampling snap (soft → sharp) at each level crossover.
+
+
+[2026-06-12] Original drift restored + preload cap raised
+-----------------------------------------------------------
+CHANGED  components/GameMap.tsx
+         - Drift reverted to the original 2026-05-27 behaviour: final phase
+           only (z6 → z3.5, last 5 s), uniform ±10° lng / ±6° lat from the
+           target, lat clamped to ±85°. Implemented as a chained easeTo at
+           the z6 spline knot (t = 0.75) — same smooth single-curve zoom
+           trajectory, drift in world degrees at continental viewport scale
+           where it reads as gentle drift. Pixel-offset drift removed.
+         - Preload hard cap 5 s → 12 s. The 13-step ladder legitimately
+           takes 2-6 s; the 5 s cap was silently truncating the tail — the
+           low-zoom levels displayed when the zoom-out moves fastest — which
+           was the cause of the remaining black edge tiles (and most of the
+           perceived quality drops: missing tiles render as stretched blurry
+           parents until fetched).
+
+
+[2026-06-12] Half-zoom preload ladder + delayed smaller drift
+---------------------------------------------------------------
+CHANGED  components/GameMap.tsx
+         - Preload ladder moved from integer zooms to HALF zooms (15.5 …
+           4.5). Root cause of edge load-in: raster sources round fractional
+           zoom to pick the tile level, so just below each integer (e.g.
+           z14.6 → level-15 tiles) the viewport is up to ~41% wider than
+           that level's own snapshot — the integer ladder never cached that
+           outer ring. z = N − 0.5 is the widest viewport level N is ever
+           shown at, so that is where each level is now preloaded.
+         - Drift shrunk (4–9% of width, 3–7% of height; was 10–25% / 8–20%)
+           and delayed: animation is now two chained easeTo halves split at
+           the z11 spline knot (t = 0.5 → 10 s). First half is a pure
+           centred zoom-out; the offset rides only on the second half, so
+           drift is imperceptible until ~10 s in. Each half replays its half
+           of the same Catmull-Rom spline — combined zoom trajectory is
+           identical to the single-easeTo version, seam included.
+         - driftTimerRef guards the phase-2 starter: cleared on round reset,
+           unmount, and when frozen goes true (guess made before 10 s would
+           otherwise let the pending phase-2 easeTo yank the result camera).
+         - maxTileCacheSize 300 → 512 (half-zoom viewports cache more tiles
+           per level; all 13 levels must stay resident through the 20 s).
+
+
+[2026-06-12] Full tile-preload ladder + drift reintroduced
+------------------------------------------------------------
+CHANGED  components/GameMap.tsx — triggerAnimation()
+         - Preload waterfall now visits EVERY integer zoom level from
+           START_ZOOM-1 down to 4, then the drifted end state at END_ZOOM,
+           before starting the animation (was: only knots 14/11/6/3.5)
+         - Container opacity set to 0 during the ladder, restored before
+           easeTo (guard in case the loading overlay ever goes translucent)
+         - Preload hard cap tightened 10 s → 5 s; on timeout the animation
+           starts anyway with visible tile loading (never a stuck screen)
+ADDED    Drift — random per-round pixel offset passed to easeTo({ offset })
+         - Target ends displaced from screen centre so players cannot score
+           by always guessing the exact middle of the screen
+         - Offset is in screen pixels (10–25% of width, 8–20% of height),
+           so the slide is gentle at every zoom; at z3.5 it equals several
+           degrees of real displacement
+         - Single-easeTo model preserved (drift interpolated internally by
+           Mapbox — no per-frame jumpTo, no shake regression)
+         - End-of-animation camera centre computed via MercatorCoordinate;
+           final ladder step preloads tiles at that drifted centre
+
+
 [2026-05-30] Minimap redesign — GeoGuessr-style
 -------------------------------------------------
 CHANGED  components/MiniMap.tsx — complete rewrite

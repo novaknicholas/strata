@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState, useCallback, memo } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
+import { mountPersistentMap, detachPersistentMap } from '@/lib/persistentMap'
+import { createMiniMap, MINI_MAP_KEY } from '@/lib/createMaps'
 
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!
 
@@ -84,19 +86,26 @@ function MiniMap({ roundKey, onGuess, onSubmit, disabled = false, showResult }: 
     return () => window.removeEventListener('resize', check)
   }, [])
 
-  // ── Mapbox init ───────────────────────────────────────────────────────────
+  // ── Mapbox init — tab-lifetime singleton ─────────────────────────────────
+  // Constructed once per tab (one map-load credit, ever); unmounts only
+  // detach the canvas. Click handlers are rebound per component instance
+  // because they capture this instance's refs.
   useEffect(() => {
-    if (mapRef.current || !containerRef.current) return
-    const map = new mapboxgl.Map({
-      container: containerRef.current,
-      style: 'mapbox://styles/mapbox/outdoors-v12',
-      center: [0, 20], zoom: 1.5,
-      attributionControl: false,
-    })
-    map.addControl(new mapboxgl.AttributionControl({ compact: true }), 'bottom-right')
-    map.on('load',    () => { map.getCanvas().style.cursor = 'crosshair' })
-    map.on('dragend', () => { map.getCanvas().style.cursor = 'crosshair' })
-    map.on('click', e => {
+    if (!containerRef.current) return
+    // Normally created earlier by MapPrewarm (menu); direct creation here is
+    // the fallback if a game starts without the menu having mounted.
+    const { map, created } = mountPersistentMap(MINI_MAP_KEY, containerRef.current, el =>
+      createMiniMap(el)
+    )
+    if (!created) {
+      // Reattached — wipe leftover result state from a previous game
+      map.stop()
+      if (map.getLayer('result-line'))  map.removeLayer('result-line')
+      if (map.getSource('result-line')) map.removeSource('result-line')
+      map.jumpTo({ center: [0, 20], zoom: 1.5 })
+    }
+
+    const onClick = (e: mapboxgl.MapMouseEvent) => {
       if (disabledRef.current) return
       const { lng, lat } = e.lngLat
       if (markerRef.current) {
@@ -107,9 +116,19 @@ function MiniMap({ roundKey, onGuess, onSubmit, disabled = false, showResult }: 
         setHasPin(true)
       }
       onGuessRef.current([lng, lat])
-    })
+    }
+    map.on('click', onClick)
     mapRef.current = map
-    return () => { map.remove(); mapRef.current = null; markerRef.current = null }
+
+    return () => {
+      map.off('click', onClick)
+      markerRef.current?.remove();       markerRef.current = null
+      resultMarkerRef.current?.remove(); resultMarkerRef.current = null
+      if (map.getLayer('result-line'))  map.removeLayer('result-line')
+      if (map.getSource('result-line')) map.removeSource('result-line')
+      detachPersistentMap(MINI_MAP_KEY)   // detach, never remove() — tab-lifetime
+      mapRef.current = null
+    }
   }, [])
 
   useEffect(() => {
