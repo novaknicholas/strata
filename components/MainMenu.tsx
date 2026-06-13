@@ -4,13 +4,10 @@ import { useEffect, useState } from 'react'
 import type { GameMode } from '@/lib/types'
 
 // ── Rolling-hill topographic contour paths (brand texture) ────────────────
-// Clusters of concentric, slightly wobbly closed rings — like a real topo map.
-// Rendered faint and cool over the night sky so the lines read as a watermark
-// tracing behind the title, not decoration sitting on top.
 const TOPO_PATHS: { d: string; index: boolean }[] = (() => {
   type Hill = [number, number, number, number, number, number, number]
   const hills: Hill[] = [
-    [  300,  300, 470, 250, 9, 4, 0.07],   // anchored behind the title block
+    [  300,  300, 470, 250, 9, 4, 0.07],
     [ 1180,  220, 360, 200, 7, 3, 0.06],
     [  760,  720, 440, 250, 8, 5, 0.08],
     [  130, 1060, 320, 190, 6, 4, 0.06],
@@ -42,7 +39,7 @@ const TOPO_PATHS: { d: string; index: boolean }[] = (() => {
   return out
 })()
 
-// ── Coordinate-marker glyph — a single consistent brand mark per tile ─────
+// Coordinate-marker glyph — one consistent brand mark per tile
 function Marker() {
   return (
     <svg width="15" height="15" viewBox="0 0 16 16" fill="none"
@@ -53,27 +50,31 @@ function Marker() {
   )
 }
 
-type Size  = 'hero' | 'wide' | 'std'
-type Badge = { text: string; cls: string }
+type Mode = {
+  key:    GameMode
+  label:  string
+  desc:   string
+  img:    string
+  badge?: { text: string; cls: string }
+}
 
-const MODES: {
-  key:   GameMode
-  label: string
-  desc:  string
-  img:   string
-  size:  Size
-  badge?: Badge
-}[] = [
-  { key: 'terra',     label: 'Terra',     desc: 'Anywhere on Earth',        img: '/images/terra.jpg',     size: 'hero', badge: { text: 'Featured',     cls: 'sx-badge-feat' } },
-  { key: 'urban',     label: 'Urban',     desc: 'Cities & towns worldwide', img: '/images/urban.jpg',     size: 'wide', badge: { text: 'Most popular', cls: 'sx-badge-top'  } },
-  { key: 'usa',       label: 'USA',       desc: 'Across the United States', img: '/images/usa.jpg',       size: 'wide', badge: { text: 'Popular',      cls: 'sx-badge-pop'  } },
-  { key: 'mountains', label: 'Mountains', desc: 'High peaks above 2,000 m', img: '/images/mountains.jpg', size: 'wide' },
-  { key: 'volcanoes', label: 'Volcanoes', desc: 'Active & dormant cones',   img: '/images/volcanoes.jpg', size: 'std'  },
-  { key: 'islands',   label: 'Islands',   desc: 'Reefs & remote shores',    img: '/images/islands.jpg',   size: 'std'  },
-  { key: 'uncharted', label: 'Uncharted', desc: 'Deserts & wilderness',     img: '/images/uncharted.jpg', size: 'std'  },
-  { key: 'europe',    label: 'Europe',    desc: 'Towns & cities of Europe', img: '/images/europe.jpg',    size: 'std'  },
-  { key: 'airports',  label: 'Airports',  desc: 'Major hubs worldwide',     img: '/images/airports.jpg',  size: 'std'  },
-  { key: 'landmarks', label: 'Landmarks', desc: 'Iconic sites & wonders',   img: '/images/landmarks.jpg', size: 'std'  },
+// Featured hero (top-right of the asymmetric hero zone)
+const FEATURED: Mode = {
+  key: 'terra', label: 'Terra', desc: 'Anywhere on Earth', img: '/images/terra.jpg',
+  badge: { text: 'Featured', cls: 'sx-badge-feat' },
+}
+
+// Lower grid — Urban anchors it as a 2×2 (most popular); the rest are square
+const GRID: Mode[] = [
+  { key: 'urban',     label: 'Urban',     desc: 'Cities & towns worldwide', img: '/images/urban.jpg',     badge: { text: 'Most popular', cls: 'sx-badge-top' } },
+  { key: 'usa',       label: 'USA',       desc: 'Across the United States', img: '/images/usa.jpg',       badge: { text: 'Popular',      cls: 'sx-badge-pop' } },
+  { key: 'mountains', label: 'Mountains', desc: 'High peaks above 2,000 m', img: '/images/mountains.jpg' },
+  { key: 'volcanoes', label: 'Volcanoes', desc: 'Active & dormant cones',   img: '/images/volcanoes.jpg' },
+  { key: 'islands',   label: 'Islands',   desc: 'Reefs & remote shores',    img: '/images/islands.jpg'   },
+  { key: 'uncharted', label: 'Uncharted', desc: 'Jungle, desert & wild',    img: '/images/uncharted.jpg' },
+  { key: 'europe',    label: 'Europe',    desc: 'Towns & cities of Europe', img: '/images/europe.jpg'    },
+  { key: 'airports',  label: 'Airports',  desc: 'Major hubs worldwide',     img: '/images/airports.jpg'  },
+  { key: 'landmarks', label: 'Landmarks', desc: 'Iconic sites & wonders',   img: '/images/landmarks.jpg' },
 ]
 
 const BEST_KEY = 'strata_best_score'
@@ -92,6 +93,27 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
     } catch { /* storage blocked */ }
   }, [])
 
+  // Reusable tile
+  const Tile = ({ mode, className = '', showDesc = false, delay = 0 }:
+    { mode: Mode; className?: string; showDesc?: boolean; delay?: number }) => (
+    <button
+      type="button"
+      className={`sx-tile ${className}`}
+      style={{ animationDelay: `${delay}s` }}
+      aria-label={`Play ${mode.label} — ${mode.desc}`}
+      onClick={() => onPlay(mode.key)}
+    >
+      <span className="sx-img" style={{ backgroundImage: `url(${mode.img})` }} />
+      <span className="sx-grad" />
+      <span className="sx-mark"><Marker /></span>
+      {mode.badge && <span className={`sx-badge ${mode.badge.cls}`}>{mode.badge.text}</span>}
+      <span className="sx-meta">
+        <span className="sx-name">{mode.label}</span>
+        {showDesc && <span className="sx-desc">{mode.desc}</span>}
+      </span>
+    </button>
+  )
+
   return (
     <div
       className="sx-root absolute inset-0 z-50 overflow-y-auto"
@@ -107,7 +129,7 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
           minHeight:     '100%',
           maxWidth:      1080,
           margin:        '0 auto',
-          paddingTop:    'calc(env(safe-area-inset-top, 0px) + 3.25rem)',
+          paddingTop:    'calc(env(safe-area-inset-top, 0px) + 3rem)',
           paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 2.5rem)',
           paddingLeft:   'calc(env(safe-area-inset-left, 0px) + 1.35rem)',
           paddingRight:  'calc(env(safe-area-inset-right, 0px) + 1.35rem)',
@@ -122,105 +144,95 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
         >
           {TOPO_PATHS.map(({ d, index }, i) => (
             <path key={i} d={d} fill="none" stroke="#8fb4dc"
-              strokeWidth={index ? 1.2 : 0.7} opacity={index ? 0.085 : 0.05} />
+              strokeWidth={index ? 1.2 : 0.7} opacity={index ? 0.08 : 0.045} />
           ))}
         </svg>
 
         {/* Content */}
-        <div
-          className="relative"
-          style={{ zIndex: 10, animation: 'slideUp 0.55s cubic-bezier(0.16,1,0.3,1) both', animationDelay: '0.04s' }}
-        >
-          {/* Header — left aligned, editorial */}
-          <p style={{
-            fontFamily: 'var(--font-display), system-ui, sans-serif',
-            fontSize: 11, fontWeight: 500, letterSpacing: '0.34em',
-            color: 'rgba(233,238,247,0.42)', textTransform: 'uppercase', margin: '0 0 10px',
-          }}>
-            Geography · Satellite
-          </p>
+        <div className="relative" style={{ zIndex: 10, animation: 'slideUp 0.55s cubic-bezier(0.16,1,0.3,1) both', animationDelay: '0.04s' }}>
 
-          <h1 style={{
-            fontFamily: 'var(--font-display), system-ui, sans-serif',
-            fontWeight: 700, fontSize: 'clamp(52px, 12vw, 104px)', lineHeight: 0.9,
-            letterSpacing: '-0.015em', color: '#f5f2ec', margin: '0 0 14px',
-          }}>
-            Strata
-          </h1>
+          {/* ── Hero zone: title block (left) + featured planet (right) ── */}
+          <div className="sx-herozone">
+            <div>
+              <p style={{
+                fontFamily: 'var(--font-display), system-ui, sans-serif',
+                fontSize: 11, fontWeight: 500, letterSpacing: '0.34em',
+                color: 'rgba(233,238,247,0.42)', textTransform: 'uppercase', margin: '0 0 10px',
+              }}>
+                Geography · Satellite
+              </p>
 
-          <p style={{
-            fontSize: 14.5, color: 'rgba(225,232,244,0.5)', lineHeight: 1.5,
-            maxWidth: 360, margin: '0 0 26px',
-          }}>
-            Five satellite snapshots. Zoom out, read the land, name the place.
-          </p>
+              <h1 style={{
+                fontFamily: 'var(--font-display), system-ui, sans-serif',
+                fontWeight: 700, fontSize: 'clamp(50px, 9vw, 92px)', lineHeight: 0.9,
+                letterSpacing: '-0.015em', color: '#f5f2ec', margin: '0 0 16px',
+              }}>
+                Strata
+              </h1>
 
-          {/* Tabs */}
-          <div style={{
-            display: 'inline-flex', gap: 3, background: 'rgba(255,255,255,0.05)',
-            border: '1px solid rgba(255,255,255,0.06)', borderRadius: 12, padding: 4, marginBottom: 30,
-          }}>
-            <button type="button" className="sx-tab sx-tab-active">Single Player</button>
-            <button type="button" className="sx-tab" disabled style={{ cursor: 'default' }}>
-              Multiplayer
-              <span style={{
-                fontSize: 8, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase',
-                background: 'rgba(255,255,255,0.08)', color: 'rgba(233,238,247,0.4)',
-                padding: '2px 6px', borderRadius: 4,
-              }}>Soon</span>
-            </button>
+              <p style={{ fontSize: 14.5, color: 'rgba(225,232,244,0.5)', lineHeight: 1.5, maxWidth: 330, margin: '0 0 24px' }}>
+                Five satellite snapshots. Zoom out, read the land, name the place.
+              </p>
+
+              <div style={{
+                display: 'inline-flex', gap: 3, background: 'rgba(255,255,255,0.05)',
+                border: '1px solid rgba(255,255,255,0.06)', borderRadius: 12, padding: 4, marginBottom: 20,
+              }}>
+                <button type="button" className="sx-tab sx-tab-active">Single Player</button>
+                <button type="button" className="sx-tab" disabled style={{ cursor: 'default' }}>
+                  Multiplayer
+                  <span style={{
+                    fontSize: 8, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase',
+                    background: 'rgba(255,255,255,0.08)', color: 'rgba(233,238,247,0.4)', padding: '2px 6px', borderRadius: 4,
+                  }}>Soon</span>
+                </button>
+              </div>
+
+              {bestScore !== null && (
+                <div>
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 8,
+                    fontFamily: 'var(--font-display), system-ui, sans-serif',
+                    fontSize: 11.5, fontWeight: 500, letterSpacing: '0.04em', color: 'var(--accent)',
+                    background: 'var(--accent-soft)', border: '1px solid var(--accent-line)', padding: '6px 13px', borderRadius: 999,
+                  }}>
+                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden>
+                      <path d="M4 2h8v3a4 4 0 0 1-8 0V2Z" /><path d="M4 4H2v1a2 2 0 0 0 2 2M12 4h2v1a2 2 0 0 1-2 2M6 11h4M5.5 14h5M8 11v3" strokeLinecap="round" />
+                    </svg>
+                    Best {bestScore.toLocaleString()} / 30,000
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Featured planet */}
+            <Tile mode={FEATURED} className="sx-feature" showDesc delay={0.06} />
           </div>
 
-          {/* Bento grid */}
+          {/* ── Section break ── */}
+          <div className="sx-section">
+            <span className="sx-section-l">All worlds</span>
+            <span className="sx-section-c">09</span>
+            <span className="sx-section-rule" />
+          </div>
+
+          {/* ── Lower grid ── */}
           <div className="sx-grid">
-            {MODES.map((mode, i) => (
-              <button
+            {GRID.map((mode, i) => (
+              <Tile
                 key={mode.key}
-                type="button"
-                className={`sx-tile ${mode.size === 'hero' ? 'sx-hero' : mode.size === 'wide' ? 'sx-wide' : ''}`}
-                style={{ animationDelay: `${0.06 + i * 0.04}s` }}
-                aria-label={`Play ${mode.label} — ${mode.desc}`}
-                onClick={() => onPlay(mode.key)}
-              >
-                <span className="sx-img" style={{ backgroundImage: `url(${mode.img})` }} />
-                <span className="sx-grad" />
-                <span className="sx-mark"><Marker /></span>
-                {mode.badge && <span className={`sx-badge ${mode.badge.cls}`}>{mode.badge.text}</span>}
-                <span className="sx-meta">
-                  <span className="sx-name">{mode.label}</span>
-                  {mode.size !== 'std' && <span className="sx-desc">{mode.desc}</span>}
-                </span>
-              </button>
+                mode={mode}
+                className={mode.key === 'urban' ? 'sx-anchor' : ''}
+                showDesc={mode.key === 'urban'}
+                delay={0.1 + i * 0.04}
+              />
             ))}
           </div>
 
-          {/* Footer — best score badge + imagery credit */}
-          <div style={{
-            marginTop: 26, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            flexWrap: 'wrap', gap: 12,
-          }}>
-            {bestScore !== null ? (
-              <span style={{
-                display: 'inline-flex', alignItems: 'center', gap: 8,
-                fontFamily: 'var(--font-display), system-ui, sans-serif',
-                fontSize: 11.5, fontWeight: 500, letterSpacing: '0.04em', color: 'var(--accent)',
-                background: 'var(--accent-soft)', border: '1px solid var(--accent-line)',
-                padding: '6px 13px', borderRadius: 999,
-              }}>
-                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor"
-                  strokeWidth="1.4" aria-hidden>
-                  <path d="M4 2h8v3a4 4 0 0 1-8 0V2Z" /><path d="M4 4H2v1a2 2 0 0 0 2 2M12 4h2v1a2 2 0 0 1-2 2M6 11h4M5.5 14h5M8 11v3" strokeLinecap="round" />
-                </svg>
-                Best {bestScore.toLocaleString()} / 30,000
-              </span>
-            ) : <span />}
-
-            <span style={{
-              fontSize: 10.5, letterSpacing: '0.05em', color: 'rgba(225,232,244,0.28)',
-            }}>
-              Imagery © Mapbox · Maxar
-            </span>
-          </div>
+          {/* ── Footer credit ── */}
+          <p style={{ marginTop: 22, textAlign: 'right', fontSize: 10.5, letterSpacing: '0.05em', color: 'rgba(225,232,244,0.28)' }}>
+            Imagery © Mapbox · Maxar · NASA
+          </p>
         </div>
       </div>
     </div>
