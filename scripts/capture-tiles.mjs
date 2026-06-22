@@ -55,4 +55,21 @@ for (const [key, s] of Object.entries(SHOTS)) {
   await writeFile(path.join(root, 'public', 'images', `${key}.jpg`), jpg)
   console.log(`${key.padEnd(10)} ${(jpg.length / 1024).toFixed(0)} KB`)
 }
+
+// Flat square web-mercator world for the interactive menu map.
+// center 0,0 zoom 2 at 1024 logical px = exactly one world (256·2² = 1024),
+// so pins project with the standard web-mercator formula.
+{
+  const url =
+    `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/static/0,0,2/1024x1024@2x` +
+    `?access_token=${token}&attribution=false&logo=false`
+  const res = await fetch(url, { headers: { Referer: 'http://localhost:3000/' } })
+  if (!res.ok) { console.error('world', res.status, (await res.text()).slice(0, 120)) }
+  else {
+    const jpg = await sharp(Buffer.from(await res.arrayBuffer())).jpeg({ quality: 80 }).toBuffer()
+    await writeFile(path.join(root, 'public', 'images', 'world.jpg'), jpg)
+    console.log(`world      ${(jpg.length / 1024).toFixed(0)} KB`)
+  }
+}
+
 console.log('done')

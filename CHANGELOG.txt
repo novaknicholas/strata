@@ -3,6 +3,27 @@ STRATA — CHANGELOG
 Reverse-chronological. Each entry covers one logical change session.
 
 
+[2026-06-13] Menu reworked as an interactive world map (GeoGuessr-style)
+--------------------------------------------------------------------------
+Replaced the tile grid entirely. The menu IS a map now.
+ADDED    public/images/world.jpg — flat square web-mercator satellite world
+         (Mapbox static, center 0,0 zoom 2 → exactly one world), captured by
+         scripts/capture-tiles.mjs.
+CHANGED  components/MainMenu.tsx — full rewrite:
+         - Satellite world map centerpiece with a faint graticule overlay.
+         - 9 location-specific modes are glowing pins projected onto the map
+           via web-mercator (project(lon,lat)); Terra ("anywhere") has no pin.
+         - Hover/focus a pin → live preview in the detail panel; click → select.
+         - Detail panel: mode image, coordinates (or "Whole planet"),
+           popularity tag, description, accent "Play <mode>" button.
+         - Mode chips below: every mode one tap, with thumbnail; hover previews,
+           click selects. Keeps UX efficient (all modes reachable instantly).
+         - Desktop: map left + panel right; mobile: stacked. Full safe-area.
+CHANGED  app/globals.css — replaced the .sx-* bento/tile rules with the .mx-*
+         map system (pins, pulse, graticule, detail panel, chips). Kept the
+         deep-space backdrop, accent tokens, and tab styles.
+
+
 [2026-06-13] Homepage visual redesign — deep-space / satellite bento
 ----------------------------------------------------------------------
 Full visual redesign of the main menu (no game logic touched).
