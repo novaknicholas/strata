@@ -3,74 +3,62 @@
 import { useEffect, useState } from 'react'
 import type { GameMode } from '@/lib/types'
 
-// ── Topographic contour brand texture ─────────────────────────────────────
-const TOPO_PATHS: { d: string; index: boolean }[] = (() => {
-  type Hill = [number, number, number, number, number, number, number]
-  const hills: Hill[] = [
-    [  300,  300, 470, 250, 9, 4, 0.07],
-    [ 1180,  220, 360, 200, 7, 3, 0.06],
-    [  760,  720, 440, 250, 8, 5, 0.08],
-    [  130, 1060, 320, 190, 6, 4, 0.06],
-    [ 1250, 1100, 410, 235, 7, 3, 0.07],
-    [  560, 1520, 390, 220, 7, 4, 0.07],
-    [ 1080, 1800, 340, 195, 6, 5, 0.06],
-    [  -60,  720, 270, 160, 5, 3, 0.05],
-    [ 1510,  960, 300, 170, 5, 4, 0.05],
-  ]
-  const STEPS = 120
-  const out: { d: string; index: boolean }[] = []
-  for (const [cx, cy, maxRx, maxRy, levels, wFreq, wAmp] of hills) {
-    for (let lvl = 1; lvl <= levels; lvl++) {
-      const t = lvl / levels
-      const rx = maxRx * t, ry = maxRy * t
-      const phase = lvl * 0.63
-      const pts: string[] = []
-      for (let s = 0; s <= STEPS; s++) {
-        const θ = (s / STEPS) * Math.PI * 2
-        const wobble = 1 + wAmp * Math.sin(wFreq * θ + phase) + wAmp * 0.4 * Math.cos((wFreq + 2) * θ + phase * 0.7)
-        const x = cx + rx * wobble * Math.cos(θ)
-        const y = cy + ry * wobble * Math.sin(θ)
-        pts.push(`${s === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`)
-      }
-      pts.push('Z')
-      out.push({ d: pts.join(' '), index: (levels - lvl) % 3 === 0 })
+// ── Contour field for the title section — thin, slow, breathing ───────────
+// Two clusters of concentric wobbled rings, split into two layers that
+// breathe at different rates (see .eg-breathe-a / -b).
+function contourRings(
+  cx: number, cy: number, maxRx: number, maxRy: number,
+  levels: number, wFreq: number, wAmp: number,
+): string[] {
+  const STEPS = 110
+  const out: string[] = []
+  for (let lvl = 1; lvl <= levels; lvl++) {
+    const t = lvl / levels
+    const rx = maxRx * t, ry = maxRy * t
+    const phase = lvl * 0.63
+    const pts: string[] = []
+    for (let s = 0; s <= STEPS; s++) {
+      const θ = (s / STEPS) * Math.PI * 2
+      const wobble = 1 + wAmp * Math.sin(wFreq * θ + phase) + wAmp * 0.4 * Math.cos((wFreq + 2) * θ + phase * 0.7)
+      pts.push(`${s === 0 ? 'M' : 'L'}${(cx + rx * wobble * Math.cos(θ)).toFixed(1)},${(cy + ry * wobble * Math.sin(θ)).toFixed(1)}`)
     }
+    pts.push('Z')
+    out.push(pts.join(' '))
   }
   return out
-})()
-
-function Marker() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden>
-      <circle cx="8" cy="8" r="2.6" />
-      <path d="M8 0.5V3.6M8 12.4V15.5M0.5 8H3.6M12.4 8H15.5" strokeLinecap="round" />
-    </svg>
-  )
 }
 
-type Size = 'hero' | 'wide' | 'std'
+const RINGS_A = [
+  ...contourRings(300, 210, 420, 235, 8, 4, 0.07),
+  ...contourRings(1190, 300, 360, 205, 7, 3, 0.06),
+]
+const RINGS_B = [
+  ...contourRings(760, 120, 330, 185, 6, 5, 0.08),
+  ...contourRings(60, 430, 260, 150, 5, 3, 0.05),
+]
 
 interface Mode {
   key:   GameMode
   label: string
   desc:  string
   img:   string
-  size:  Size
-  badge?: { text: string; cls: string }
+  tag?:  string
 }
 
-// Tile size tracks popularity: Urban biggest → Terra/USA wide → rest square.
-const MODES: Mode[] = [
-  { key: 'urban',     label: 'Urban',     desc: 'Cities & towns worldwide', img: '/images/urban.jpg',     size: 'hero', badge: { text: 'Most popular', cls: 'sx-badge-top' } },
-  { key: 'terra',     label: 'Terra',     desc: 'Anywhere on Earth',        img: '/images/terra.jpg',     size: 'wide', badge: { text: 'Featured',     cls: 'sx-badge-feat' } },
-  { key: 'usa',       label: 'USA',       desc: 'Coast to coast',           img: '/images/usa.jpg',       size: 'wide', badge: { text: 'Popular',      cls: 'sx-badge-pop' } },
-  { key: 'mountains', label: 'Mountains', desc: 'High peaks & glaciers',    img: '/images/mountains.jpg', size: 'wide' },
-  { key: 'europe',    label: 'Europe',    desc: 'Towns & cities of Europe', img: '/images/europe.jpg',    size: 'std' },
-  { key: 'islands',   label: 'Islands',   desc: 'Reefs & remote shores',    img: '/images/islands.jpg',   size: 'std' },
-  { key: 'volcanoes', label: 'Volcanoes', desc: 'Active & dormant cones',   img: '/images/volcanoes.jpg', size: 'std' },
-  { key: 'uncharted', label: 'Uncharted', desc: 'Jungle, desert & wild',    img: '/images/uncharted.jpg', size: 'std' },
-  { key: 'airports',  label: 'Airports',  desc: 'Major hubs worldwide',     img: '/images/airports.jpg',  size: 'std' },
-  { key: 'landmarks', label: 'Landmarks', desc: 'Iconic sites & wonders',   img: '/images/landmarks.jpg', size: 'std' },
+const FEATURED: Mode[] = [
+  { key: 'urban', label: 'Urban', desc: 'Cities & towns worldwide',  img: '/images/urban.jpg', tag: 'Most popular' },
+  { key: 'terra', label: 'Terra', desc: 'Anywhere on Earth',         img: '/images/terra.jpg', tag: 'Featured' },
+  { key: 'usa',   label: 'USA',   desc: 'Coast to coast',            img: '/images/usa.jpg',   tag: 'Popular' },
+]
+
+const REST: Mode[] = [
+  { key: 'europe',    label: 'Europe',    desc: 'Towns & cities of Europe' , img: '/images/europe.jpg'    },
+  { key: 'islands',   label: 'Islands',   desc: 'Reefs & remote shores'    , img: '/images/islands.jpg'   },
+  { key: 'mountains', label: 'Mountains', desc: 'High peaks & glaciers'    , img: '/images/mountains.jpg' },
+  { key: 'volcanoes', label: 'Volcanoes', desc: 'Active & dormant cones'   , img: '/images/volcanoes.jpg' },
+  { key: 'uncharted', label: 'Uncharted', desc: 'Jungle, desert & wild'    , img: '/images/uncharted.jpg' },
+  { key: 'airports',  label: 'Airports',  desc: 'Major hubs worldwide'     , img: '/images/airports.jpg'  },
+  { key: 'landmarks', label: 'Landmarks', desc: 'Iconic sites & wonders'   , img: '/images/landmarks.jpg' },
 ]
 
 const BEST_KEY = 'strata_best_score'
@@ -89,108 +77,134 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
     } catch { /* storage blocked */ }
   }, [])
 
+  const Tile = ({ mode, className = '', delay }: { mode: Mode; className?: string; delay: number }) => (
+    <button
+      type="button"
+      className={`eg-tile eg-fade ${className}`}
+      style={{ animationDelay: `${delay}s` }}
+      aria-label={`Play ${mode.label} — ${mode.desc}`}
+      onClick={() => onPlay(mode.key)}
+    >
+      <span className="eg-img" style={{ backgroundImage: `url(${mode.img})` }} />
+      <span className="eg-shade" />
+      {mode.tag && <span className="eg-tag">{mode.tag}</span>}
+      <span className="eg-meta">
+        <span className="eg-name">{mode.label}</span>
+        <span className="eg-desc">{mode.desc}</span>
+      </span>
+    </button>
+  )
+
   return (
     <div
-      className="sx-root absolute inset-0 z-50 overflow-y-auto"
+      className="eg-root absolute inset-0 z-50 overflow-y-auto"
       style={{
         WebkitOverflowScrolling: 'touch' as never,
         overscrollBehavior:      'contain',
-        animation:               'fadeIn 0.4s ease both',
+        animation:               'fadeIn 0.35s ease both',
       }}
     >
       <div
         className="relative"
         style={{
           minHeight:     '100%',
-          maxWidth:      1100,
+          maxWidth:      1040,
           margin:        '0 auto',
-          paddingTop:    'calc(env(safe-area-inset-top, 0px) + 3rem)',
-          paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 3rem)',
+          paddingTop:    'calc(env(safe-area-inset-top, 0px) + 3.5rem)',
+          paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 2.75rem)',
           paddingLeft:   'calc(env(safe-area-inset-left, 0px) + 1.4rem)',
           paddingRight:  'calc(env(safe-area-inset-right, 0px) + 1.4rem)',
         }}
       >
-        {/* Contour brand texture */}
-        <svg
-          aria-hidden
-          viewBox="0 0 1440 2000"
-          preserveAspectRatio="xMidYMin slice"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
-        >
-          {TOPO_PATHS.map(({ d, index }, i) => (
-            <path key={i} d={d} fill="none" stroke="#8fb4dc"
-              strokeWidth={index ? 1.2 : 0.7} opacity={index ? 0.08 : 0.045} />
-          ))}
-        </svg>
+        {/* ── Title section — contours live here only ── */}
+        <header className="relative" style={{ textAlign: 'center', marginBottom: 44, overflow: 'visible' }}>
+          <svg
+            aria-hidden
+            className="eg-contours"
+            viewBox="0 0 1440 560"
+            preserveAspectRatio="xMidYMid slice"
+            style={{ width: 'auto', height: 'auto' }}
+          >
+            <g className="eg-breathe-a" fill="none" stroke="#5A7050" strokeWidth="0.8" opacity="0.16">
+              {RINGS_A.map((d, i) => <path key={i} d={d} />)}
+            </g>
+            <g className="eg-breathe-b" fill="none" stroke="#5A7050" strokeWidth="0.8" opacity="0.10">
+              {RINGS_B.map((d, i) => <path key={i} d={d} />)}
+            </g>
+          </svg>
 
-        <div className="relative" style={{ zIndex: 10 }}>
-          {/* ── Header ── */}
-          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16, marginBottom: 28 }}>
-            <div>
-              <p style={{
-                fontFamily: 'var(--font-display), system-ui, sans-serif', fontSize: 11, fontWeight: 500,
-                letterSpacing: '0.34em', color: 'rgba(233,238,247,0.42)', textTransform: 'uppercase', margin: '0 0 9px',
-              }}>
-                Geography · Satellite
-              </p>
-              <h1 style={{
-                fontFamily: 'var(--font-display), system-ui, sans-serif', fontWeight: 700,
-                fontSize: 'clamp(44px, 8vw, 78px)', lineHeight: 0.9, letterSpacing: '-0.02em', color: '#f5f2ec', margin: '0 0 12px',
-              }}>
-                Strata
-              </h1>
-              <p style={{ fontSize: 14.5, color: 'rgba(225,232,244,0.5)', margin: 0 }}>
-                Five satellite snapshots. Guess where on Earth you are.
-              </p>
-            </div>
+          <p className="eg-kicker eg-fade" style={{ margin: '0 0 18px', animationDelay: '0s', position: 'relative' }}>
+            Explore our Earth
+          </p>
 
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10 }}>
-              <div style={{ display: 'inline-flex', gap: 3, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 11, padding: 4 }}>
-                <button type="button" className="sx-tab sx-tab-active">Single Player</button>
-                <button type="button" className="sx-tab" disabled style={{ cursor: 'default' }}>
-                  Multiplayer
-                  <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', background: 'rgba(255,255,255,0.08)', color: 'rgba(233,238,247,0.4)', padding: '2px 6px', borderRadius: 4 }}>Soon</span>
-                </button>
-              </div>
-              {bestScore !== null && (
-                <span style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 7, fontFamily: 'var(--font-display), system-ui, sans-serif',
-                  fontSize: 11.5, fontWeight: 500, letterSpacing: '0.03em', color: 'var(--accent)',
-                  background: 'var(--accent-soft)', border: '1px solid var(--accent-line)', padding: '5px 12px', borderRadius: 999,
-                }}>
-                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden>
-                    <path d="M4 2h8v3a4 4 0 0 1-8 0V2Z" /><path d="M4 4H2v1a2 2 0 0 0 2 2M12 4h2v1a2 2 0 0 1-2 2M6 11h4M5.5 14h5M8 11v3" strokeLinecap="round" />
-                  </svg>
-                  Best {bestScore.toLocaleString()}
-                </span>
-              )}
-            </div>
-          </div>
+          <h1
+            className="eg-fade"
+            style={{
+              position: 'relative',
+              fontFamily: 'var(--font-display), Georgia, serif',
+              fontWeight: 800,
+              fontSize: 'clamp(64px, 15vw, 132px)',
+              lineHeight: 0.95,
+              letterSpacing: '0.01em',
+              color: 'var(--ink)',
+              margin: '0 0 14px',
+              animationDelay: '0.07s',
+            }}
+          >
+            Strata
+          </h1>
 
-          {/* ── Bento grid ── */}
-          <div className="sx-grid">
-            {MODES.map((m, i) => (
-              <button
-                key={m.key}
-                type="button"
-                className={`sx-tile ${m.size === 'hero' ? 'sx-hero' : m.size === 'wide' ? 'sx-wide' : ''}`}
-                style={{ animationDelay: `${0.05 + i * 0.04}s` }}
-                aria-label={`Play ${m.label} — ${m.desc}`}
-                onClick={() => onPlay(m.key)}
-              >
-                <span className="sx-img" style={{ backgroundImage: `url(${m.img})` }} />
-                <span className="sx-grad" />
-                <span className="sx-mark"><Marker /></span>
-                {m.badge && <span className={`sx-badge ${m.badge.cls}`}>{m.badge.text}</span>}
-                <span className="sx-meta">
-                  <span className="sx-name">{m.label}</span>
-                  {m.size !== 'std' && <span className="sx-desc">{m.desc}</span>}
-                </span>
+          <p
+            className="eg-fade"
+            style={{
+              position: 'relative', fontSize: 16, color: 'var(--ink-soft)',
+              margin: '0 0 30px', animationDelay: '0.15s',
+            }}
+          >
+            Every corner of Earth. 30 seconds to find it.
+          </p>
+
+          <div className="eg-fade" style={{ position: 'relative', animationDelay: '0.22s' }}>
+            <div className="eg-tabs">
+              <button type="button" className="eg-tab eg-tab-active">Single Player</button>
+              <button type="button" className="eg-tab" disabled>
+                Multiplayer
+                <span className="eg-soon">Soon</span>
               </button>
-            ))}
+            </div>
           </div>
+        </header>
 
-          <p style={{ marginTop: 24, fontSize: 10.5, letterSpacing: '0.05em', color: 'rgba(225,232,244,0.28)' }}>
+        {/* ── Featured: Urban large + Terra / USA stacked ── */}
+        <div className="eg-feature">
+          <Tile mode={FEATURED[0]} className="eg-lead" delay={0.3} />
+          <Tile mode={FEATURED[1]} delay={0.37} />
+          <Tile mode={FEATURED[2]} delay={0.44} />
+        </div>
+
+        {/* ── The rest — wide editorial cards ── */}
+        <div className="eg-rest">
+          {REST.map((m, i) => (
+            <Tile
+              key={m.key}
+              mode={m}
+              className={i === REST.length - 1 ? 'eg-span2' : ''}
+              delay={0.5 + i * 0.06}
+            />
+          ))}
+        </div>
+
+        {/* ── Footer — quiet best-score pill + credit ── */}
+        <div style={{ marginTop: 36, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
+          {bestScore !== null && (
+            <span className="eg-best eg-fade" style={{ animationDelay: '0.9s' }}>
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden>
+                <path d="M4 2h8v3a4 4 0 0 1-8 0V2Z" /><path d="M4 4H2v1a2 2 0 0 0 2 2M12 4h2v1a2 2 0 0 1-2 2M6 11h4M5.5 14h5M8 11v3" strokeLinecap="round" />
+              </svg>
+              Best {bestScore.toLocaleString()} / 30,000
+            </span>
+          )}
+          <p style={{ fontSize: 10.5, letterSpacing: '0.06em', color: 'var(--ink-faint)', margin: 0 }}>
             Imagery © Mapbox · Maxar · NASA
           </p>
         </div>

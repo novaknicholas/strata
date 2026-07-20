@@ -1,17 +1,19 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Space_Grotesk } from "next/font/google";
+import { Playfair_Display, DM_Sans } from "next/font/google";
 import "./globals.css";
 
-const geist = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-// Display face — geometric/technical character for STRATA, headings, mode names.
-const display = Space_Grotesk({
+// Editorial pairing: Playfair for the STRATA wordmark (magazine cover),
+// DM Sans for everything else.
+const display = Playfair_Display({
   variable: "--font-display",
   subsets: ["latin"],
-  weight: ["500", "700"],
+  weight: ["700", "800"],
+});
+
+const sans = DM_Sans({
+  variable: "--font-body",
+  subsets: ["latin"],
+  weight: ["400", "500", "700"],
 });
 
 export const metadata: Metadata = {
@@ -31,7 +33,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${geist.variable} ${display.variable} h-dvh`}>
+    <html lang="en" className={`${sans.variable} ${display.variable} h-dvh`}>
       <body className="h-dvh overflow-hidden">{children}</body>
     </html>
   );
