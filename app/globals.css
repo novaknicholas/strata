@@ -39,73 +39,50 @@ body {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   Main menu — "explore our earth" editorial. Bright, airy, magazine-cover
-   wordmark, breathing contour lines behind the title only, and an
-   asymmetric photo layout (classic-GeoGuessr card skeleton). Earth is the
-   hero; UI recedes.
+   Main menu — dark, a real ISS Earth-limb photo as the backdrop (mostly
+   black space). Editorial photo cards; the imagery is the hero, UI recedes.
    ════════════════════════════════════════════════════════════════════════ */
 :root {
-  --paper:      #faf9f5;
-  --ink:        #191817;
-  --ink-soft:   rgba(25, 24, 23, 0.56);
-  --ink-faint:  rgba(25, 24, 23, 0.34);
-  --hairline:   rgba(25, 24, 23, 0.09);
+  --ink:       #f4f2ec;                       /* light text on space */
+  --ink-soft:  rgba(238, 240, 246, 0.64);
+  --ink-faint: rgba(238, 240, 246, 0.42);
+  --hairline:  rgba(255, 255, 255, 0.10);
 }
 
-@keyframes egIn      { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes egBreathe { from { transform: scale(1); } to { transform: scale(1.022); } }
+@keyframes egIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
 
-/* Scroll container — warm paper, one soft top wash. */
+/* Scroll container — real ISS Earth-limb photo, held dark so it reads as
+   space and keeps content legible. The background paints on the box, so it
+   stays fixed while content scrolls. */
 .eg-root {
   background:
-    radial-gradient(110% 60% at 50% -8%, #ffffff 0%, rgba(255,255,255,0) 60%),
-    var(--paper);
+    linear-gradient(180deg, rgba(4,6,11,.5) 0%, rgba(4,6,11,.72) 58%, rgba(4,6,11,.9) 100%),
+    #04060a url('/images/space.jpg') center center / cover no-repeat;
 }
-
-/* Breathing contour field — confined to the title section, edge-faded. */
-.eg-contours {
-  position: absolute; inset: -12% -6%; pointer-events: none;
-  -webkit-mask-image: radial-gradient(85% 80% at 50% 42%, #000 40%, transparent 97%);
-  mask-image: radial-gradient(85% 80% at 50% 42%, #000 40%, transparent 97%);
-}
-.eg-breathe-a, .eg-breathe-b { transform-origin: 50% 42%; animation: egBreathe 11s ease-in-out infinite alternate; }
-.eg-breathe-b { animation-duration: 15s; animation-delay: -6s; }
-@media (prefers-reduced-motion: reduce) { .eg-breathe-a, .eg-breathe-b { animation: none; } }
 
 .eg-fade { animation: egIn .6s cubic-bezier(.16,1,.3,1) both; }
 
-/* Kicker / small labels — spaced uppercase, light */
-.eg-kicker {
-  font-size: 11px; font-weight: 500; letter-spacing: .3em;
-  text-transform: uppercase; color: var(--ink-faint);
-}
+.eg-kicker { font-size: 11px; font-weight: 500; letter-spacing: .3em; text-transform: uppercase; color: var(--ink-faint); }
 
-/* Tabs — clean pill toggle */
-.eg-tabs {
-  display: inline-flex; gap: 4px; padding: 4px;
-  background: rgba(25,24,23,.055); border-radius: 999px;
-}
+/* Tabs — dark glass pill toggle */
+.eg-tabs { display: inline-flex; gap: 4px; padding: 4px; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.08); border-radius: 999px; }
 .eg-tab {
   font-family: var(--font-body), system-ui, sans-serif;
   font-size: 12.5px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase;
   min-height: 48px; padding: 0 22px; border-radius: 999px; border: 0; cursor: pointer;
   display: inline-flex; align-items: center; gap: 8px; background: transparent;
-  color: var(--ink-soft); transition: color .3s, background .3s, box-shadow .3s;
+  color: var(--ink-soft); transition: color .3s, background .3s;
 }
-.eg-tab-active { color: var(--ink); background: #fff; box-shadow: 0 1px 5px rgba(25,24,23,.12); }
+.eg-tab-active { color: #14130f; background: #f4f2ec; }
 .eg-tab[disabled] { cursor: default; color: var(--ink-faint); }
-.eg-soon {
-  font-size: 9px; font-weight: 700; letter-spacing: .12em;
-  background: rgba(25,24,23,.08); color: var(--ink-faint);
-  padding: 3px 7px; border-radius: 999px;
-}
+.eg-soon { font-size: 9px; font-weight: 700; letter-spacing: .12em; background: rgba(255,255,255,.12); color: var(--ink-faint); padding: 3px 7px; border-radius: 999px; }
 
 /* ── Editorial photo layout ──────────────────────────────────────────────
-   Featured block: Urban large left, Terra + USA stacked right (desktop).
-   Rest: wide photo cards, two per row; the last spans full width.
-   Mobile: everything full-width stacked, 16:9. */
-.eg-feature { display: grid; grid-template-columns: 1fr; gap: 18px; }
-.eg-rest    { display: grid; grid-template-columns: 1fr; gap: 18px; margin-top: 18px; }
+   Featured: Urban large left, Terra + USA stacked right (desktop).
+   Rest: wide cards two-up; the last spans full width. Mobile: all
+   full-width stacked, 16:9. */
+.eg-feature { display: grid; grid-template-columns: 1fr; gap: 16px; }
+.eg-rest    { display: grid; grid-template-columns: 1fr; gap: 16px; margin-top: 16px; }
 @media (min-width: 820px) {
   .eg-feature { grid-template-columns: 1.35fr 1fr; grid-template-rows: auto auto; }
   .eg-feature .eg-lead { grid-row: span 2; }
@@ -116,57 +93,48 @@ body {
 .eg-tile {
   position: relative; display: block; width: 100%; overflow: hidden;
   aspect-ratio: 16 / 9;
-  border: 0; padding: 0; margin: 0; cursor: pointer; text-align: left;
-  border-radius: 14px; background: #dcd8cf;
-  box-shadow: 0 2px 10px rgba(25,24,23,.07);
+  border: 1px solid rgba(255,255,255,.08); padding: 0; margin: 0; cursor: pointer; text-align: left;
+  border-radius: 14px; background: #0d1017;
+  box-shadow: 0 6px 22px rgba(0,0,0,.45);
   -webkit-tap-highlight-color: transparent;
 }
 @media (min-width: 820px) {
-  .eg-feature .eg-lead { aspect-ratio: auto; height: 100%; min-height: 420px; }
+  .eg-feature .eg-lead { aspect-ratio: auto; height: 100%; min-height: 430px; }
 }
 
-.eg-img {
-  position: absolute; inset: 0; background-size: cover; background-position: center;
-  transition: transform .3s ease;
-}
-/* Bottom-third shade so text always reads */
+.eg-img { position: absolute; inset: 0; background-size: cover; background-position: center; transition: transform .3s ease; }
+@media (hover: hover) { .eg-tile:hover .eg-img { transform: scale(1.03); } }
+.eg-tile:focus-visible { outline: 2px solid rgba(255,255,255,.85); outline-offset: 2px; }
+
+/* Legibility scrim — strong at the bottom (names), light at top (tags), so
+   text reads even over bright imagery like Manhattan or the US Midwest. */
 .eg-shade {
   position: absolute; inset: 0;
-  background: linear-gradient(to top, rgba(12,12,14,.72) 0%, rgba(12,12,14,.28) 30%, rgba(12,12,14,0) 52%);
+  background:
+    linear-gradient(to top, rgba(6,8,12,.92) 0%, rgba(6,8,12,.58) 22%, rgba(6,8,12,.06) 48%, rgba(6,8,12,0) 62%),
+    linear-gradient(to bottom, rgba(6,8,12,.5) 0%, rgba(6,8,12,0) 24%);
 }
-/* Thin white border on hover */
-.eg-tile::after {
-  content: ''; position: absolute; inset: 10px; border-radius: 7px;
-  border: 1px solid rgba(255,255,255,.85); opacity: 0; pointer-events: none;
-  transition: opacity .3s ease;
-}
-@media (hover: hover) {
-  .eg-tile:hover .eg-img { transform: scale(1.03); }
-  .eg-tile:hover::after  { opacity: .9; }
-}
-.eg-tile:focus-visible { outline: none; }
-.eg-tile:focus-visible::after { opacity: 1; }
 
 .eg-tag {
-  position: absolute; top: 16px; left: 18px; z-index: 2;
-  font-size: 10px; font-weight: 500; letter-spacing: .24em; text-transform: uppercase;
-  color: rgba(255,255,255,.92); text-shadow: 0 1px 6px rgba(0,0,0,.55);
+  position: absolute; top: 15px; left: 17px; z-index: 2;
+  font-size: 10px; font-weight: 600; letter-spacing: .22em; text-transform: uppercase;
+  color: rgba(255,255,255,.94); text-shadow: 0 1px 6px rgba(0,0,0,.7);
 }
-.eg-meta { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; padding: 18px 20px; }
+.eg-meta { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; padding: 16px 18px 18px; }
 .eg-name {
-  display: block; color: #fff; font-weight: 700; font-size: 21px;
-  letter-spacing: -.005em; line-height: 1.05; text-shadow: 0 1px 8px rgba(0,0,0,.4);
+  display: block; color: #fff; font-weight: 700; font-size: 22px;
+  letter-spacing: -.005em; line-height: 1.05; text-shadow: 0 2px 14px rgba(0,0,0,.8), 0 1px 3px rgba(0,0,0,.6);
 }
-.eg-lead .eg-name { font-size: clamp(26px, 3.4vw, 36px); }
+.eg-lead .eg-name { font-size: clamp(28px, 3.4vw, 38px); }
 .eg-desc {
   display: block; margin-top: 4px; font-size: 13px;
-  color: rgba(255,255,255,.66); text-shadow: 0 1px 6px rgba(0,0,0,.5);
+  color: rgba(255,255,255,.74); text-shadow: 0 1px 8px rgba(0,0,0,.8);
 }
 
 /* Best score — quiet pill at the very bottom */
 .eg-best {
   display: inline-flex; align-items: center; gap: 8px;
   font-size: 11.5px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase;
-  color: var(--ink-soft); background: #fff; border: 1px solid var(--hairline);
-  padding: 9px 16px; border-radius: 999px; box-shadow: 0 1px 4px rgba(25,24,23,.05);
+  color: var(--ink-soft); background: rgba(255,255,255,.06); border: 1px solid var(--hairline);
+  padding: 9px 16px; border-radius: 999px;
 }

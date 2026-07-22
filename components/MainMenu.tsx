@@ -3,40 +3,6 @@
 import { useEffect, useState } from 'react'
 import type { GameMode } from '@/lib/types'
 
-// ── Contour field for the title section — thin, slow, breathing ───────────
-// Two clusters of concentric wobbled rings, split into two layers that
-// breathe at different rates (see .eg-breathe-a / -b).
-function contourRings(
-  cx: number, cy: number, maxRx: number, maxRy: number,
-  levels: number, wFreq: number, wAmp: number,
-): string[] {
-  const STEPS = 110
-  const out: string[] = []
-  for (let lvl = 1; lvl <= levels; lvl++) {
-    const t = lvl / levels
-    const rx = maxRx * t, ry = maxRy * t
-    const phase = lvl * 0.63
-    const pts: string[] = []
-    for (let s = 0; s <= STEPS; s++) {
-      const θ = (s / STEPS) * Math.PI * 2
-      const wobble = 1 + wAmp * Math.sin(wFreq * θ + phase) + wAmp * 0.4 * Math.cos((wFreq + 2) * θ + phase * 0.7)
-      pts.push(`${s === 0 ? 'M' : 'L'}${(cx + rx * wobble * Math.cos(θ)).toFixed(1)},${(cy + ry * wobble * Math.sin(θ)).toFixed(1)}`)
-    }
-    pts.push('Z')
-    out.push(pts.join(' '))
-  }
-  return out
-}
-
-const RINGS_A = [
-  ...contourRings(300, 210, 420, 235, 8, 4, 0.07),
-  ...contourRings(1190, 300, 360, 205, 7, 3, 0.06),
-]
-const RINGS_B = [
-  ...contourRings(760, 120, 330, 185, 6, 5, 0.08),
-  ...contourRings(60, 430, 260, 150, 5, 3, 0.05),
-]
-
 interface Mode {
   key:   GameMode
   label: string
@@ -116,31 +82,15 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
           paddingRight:  'calc(env(safe-area-inset-right, 0px) + 1.4rem)',
         }}
       >
-        {/* ── Title section — contours live here only ── */}
-        <header className="relative" style={{ textAlign: 'center', marginBottom: 44, overflow: 'visible' }}>
-          <svg
-            aria-hidden
-            className="eg-contours"
-            viewBox="0 0 1440 560"
-            preserveAspectRatio="xMidYMid slice"
-            style={{ width: 'auto', height: 'auto' }}
-          >
-            <g className="eg-breathe-a" fill="none" stroke="#5A7050" strokeWidth="0.8" opacity="0.16">
-              {RINGS_A.map((d, i) => <path key={i} d={d} />)}
-            </g>
-            <g className="eg-breathe-b" fill="none" stroke="#5A7050" strokeWidth="0.8" opacity="0.10">
-              {RINGS_B.map((d, i) => <path key={i} d={d} />)}
-            </g>
-          </svg>
-
-          <p className="eg-kicker eg-fade" style={{ margin: '0 0 18px', animationDelay: '0s', position: 'relative' }}>
-            Explore our Earth
+        {/* ── Title section ── */}
+        <header style={{ textAlign: 'center', marginBottom: 44 }}>
+          <p className="eg-kicker eg-fade" style={{ margin: '0 0 18px', animationDelay: '0s' }}>
+            Explore our beautiful Earth
           </p>
 
           <h1
             className="eg-fade"
             style={{
-              position: 'relative',
               fontFamily: 'var(--font-display), Georgia, serif',
               fontWeight: 800,
               fontSize: 'clamp(64px, 15vw, 132px)',
@@ -148,6 +98,7 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
               letterSpacing: '0.01em',
               color: 'var(--ink)',
               margin: '0 0 14px',
+              textShadow: '0 2px 30px rgba(0,0,0,0.5)',
               animationDelay: '0.07s',
             }}
           >
@@ -156,15 +107,12 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
 
           <p
             className="eg-fade"
-            style={{
-              position: 'relative', fontSize: 16, color: 'var(--ink-soft)',
-              margin: '0 0 30px', animationDelay: '0.15s',
-            }}
+            style={{ fontSize: 16, color: 'var(--ink-soft)', margin: '0 0 30px', animationDelay: '0.15s' }}
           >
             Every corner of Earth. 30 seconds to find it.
           </p>
 
-          <div className="eg-fade" style={{ position: 'relative', animationDelay: '0.22s' }}>
+          <div className="eg-fade" style={{ animationDelay: '0.22s' }}>
             <div className="eg-tabs">
               <button type="button" className="eg-tab eg-tab-active">Single Player</button>
               <button type="button" className="eg-tab" disabled>
