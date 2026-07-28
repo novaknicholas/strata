@@ -76,15 +76,15 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
           minHeight:     '100%',
           maxWidth:      1040,
           margin:        '0 auto',
-          paddingTop:    'calc(env(safe-area-inset-top, 0px) + 3.5rem)',
-          paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 2.75rem)',
+          paddingTop:    'calc(env(safe-area-inset-top, 0px) + 2rem)',
+          paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 2.5rem)',
           paddingLeft:   'calc(env(safe-area-inset-left, 0px) + 1.4rem)',
           paddingRight:  'calc(env(safe-area-inset-right, 0px) + 1.4rem)',
         }}
       >
         {/* ── Title section ── */}
-        <header style={{ textAlign: 'center', marginBottom: 44 }}>
-          <p className="eg-kicker eg-fade" style={{ margin: '0 0 18px', animationDelay: '0s' }}>
+        <header style={{ textAlign: 'center', marginBottom: 26 }}>
+          <p className="eg-kicker eg-fade" style={{ margin: '0 0 12px', animationDelay: '0s' }}>
             Explore our beautiful Earth
           </p>
 
@@ -93,11 +93,11 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
             style={{
               fontFamily: 'var(--font-display), Georgia, serif',
               fontWeight: 800,
-              fontSize: 'clamp(64px, 15vw, 132px)',
+              fontSize: 'clamp(52px, 12vw, 104px)',
               lineHeight: 0.95,
               letterSpacing: '0.01em',
               color: 'var(--ink)',
-              margin: '0 0 14px',
+              margin: '0 0 20px',
               textShadow: '0 2px 30px rgba(0,0,0,0.5)',
               animationDelay: '0.07s',
             }}
@@ -105,14 +105,7 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
             Strata
           </h1>
 
-          <p
-            className="eg-fade"
-            style={{ fontSize: 16, color: 'var(--ink-soft)', margin: '0 0 30px', animationDelay: '0.15s' }}
-          >
-            Every corner of Earth. 30 seconds to find it.
-          </p>
-
-          <div className="eg-fade" style={{ animationDelay: '0.22s' }}>
+          <div className="eg-fade" style={{ animationDelay: '0.15s' }}>
             <div className="eg-tabs">
               <button type="button" className="eg-tab eg-tab-active">Single Player</button>
               <button type="button" className="eg-tab" disabled>

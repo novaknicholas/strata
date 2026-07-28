@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import type mapboxgl from 'mapbox-gl'
 import { haversineKm, calcScore } from '@/lib/haversine'
 import { getGameLocation }                  from '@/lib/getGameLocation'
+import { countryName }                       from '@/lib/countryName'
 import type { RoundResult, GameMode, GameLocation } from '@/lib/types'
 
 const GameMap       = dynamic(() => import('./GameMap'),       { ssr: false })
@@ -102,11 +103,8 @@ export default function GameWrapper({
     // Most modes carry a name in the data — skip the Mapbox API call.
     // Only Terra and Uncharted fall through to reverse-geocoding.
     if (target.name) {
-      setLocationName(
-        target.country
-          ? `${target.name}, ${target.country}`
-          : target.name,
-      )
+      const country = countryName(target.country)
+      setLocationName(country ? `${target.name}, ${country}` : target.name)
       return
     }
 
