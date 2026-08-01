@@ -8,23 +8,22 @@ interface Mode {
   label: string
   desc:  string
   img:   string
+  cls:   string        // grid-span class (eg-a … eg-j) — see globals.css
   tag?:  string
 }
 
-const FEATURED: Mode[] = [
-  { key: 'urban', label: 'Urban', desc: 'Cities & towns worldwide',  img: '/images/urban.jpg', tag: 'Most popular' },
-  { key: 'terra', label: 'Terra', desc: 'Anywhere on Earth',         img: '/images/terra.jpg', tag: 'Featured' },
-  { key: 'usa',   label: 'USA',   desc: 'Coast to coast',            img: '/images/usa.jpg',   tag: 'Popular' },
-]
-
-const REST: Mode[] = [
-  { key: 'europe',    label: 'Europe',    desc: 'Towns & cities of Europe' , img: '/images/europe.jpg'    },
-  { key: 'islands',   label: 'Islands',   desc: 'Reefs & remote shores'    , img: '/images/islands.jpg'   },
-  { key: 'mountains', label: 'Mountains', desc: 'High peaks & glaciers'    , img: '/images/mountains.jpg' },
-  { key: 'volcanoes', label: 'Volcanoes', desc: 'Active & dormant cones'   , img: '/images/volcanoes.jpg' },
-  { key: 'uncharted', label: 'Uncharted', desc: 'Jungle, desert & wild'    , img: '/images/uncharted.jpg' },
-  { key: 'airports',  label: 'Airports',  desc: 'Major hubs worldwide'     , img: '/images/airports.jpg'  },
-  { key: 'landmarks', label: 'Landmarks', desc: 'Iconic sites & wonders'   , img: '/images/landmarks.jpg' },
+// Ordered a→j; the span classes drive the aligned zig-zag bento.
+const MODES: Mode[] = [
+  { key: 'urban',     label: 'Urban',     desc: 'Cities & towns worldwide', img: '/images/urban.jpg',     cls: 'eg-a', tag: 'Most popular' },
+  { key: 'terra',     label: 'Terra',     desc: 'Anywhere on Earth',        img: '/images/terra.jpg',     cls: 'eg-b', tag: 'Featured' },
+  { key: 'usa',       label: 'USA',       desc: 'Coast to coast',           img: '/images/usa.jpg',       cls: 'eg-c', tag: 'Popular' },
+  { key: 'europe',    label: 'Europe',    desc: 'Towns & cities of Europe', img: '/images/europe.jpg',    cls: 'eg-d' },
+  { key: 'islands',   label: 'Islands',   desc: 'Reefs & remote shores',    img: '/images/islands.jpg',   cls: 'eg-e' },
+  { key: 'mountains', label: 'Mountains', desc: 'High peaks & glaciers',    img: '/images/mountains.jpg', cls: 'eg-f' },
+  { key: 'volcanoes', label: 'Volcanoes', desc: 'Active & dormant cones',   img: '/images/volcanoes.jpg', cls: 'eg-g' },
+  { key: 'uncharted', label: 'Uncharted', desc: 'Jungle, desert & wild',    img: '/images/uncharted.jpg', cls: 'eg-h' },
+  { key: 'airports',  label: 'Airports',  desc: 'Major hubs worldwide',     img: '/images/airports.jpg',  cls: 'eg-i' },
+  { key: 'landmarks', label: 'Landmarks', desc: 'Iconic sites & wonders',   img: '/images/landmarks.jpg', cls: 'eg-j' },
 ]
 
 const BEST_KEY = 'strata_best_score'
@@ -82,12 +81,8 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
           paddingRight:  'calc(env(safe-area-inset-right, 0px) + 1.4rem)',
         }}
       >
-        {/* ── Title section ── */}
-        <header style={{ textAlign: 'center', marginBottom: 26 }}>
-          <p className="eg-kicker eg-fade" style={{ margin: '0 0 12px', animationDelay: '0s' }}>
-            Explore our beautiful Earth
-          </p>
-
+        {/* ── Title section — wordmark, motto beneath ── */}
+        <header style={{ textAlign: 'center', marginBottom: 22 }}>
           <h1
             className="eg-fade"
             style={{
@@ -97,13 +92,17 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
               lineHeight: 0.95,
               letterSpacing: '0.01em',
               color: 'var(--ink)',
-              margin: '0 0 20px',
+              margin: '0 0 10px',
               textShadow: '0 2px 30px rgba(0,0,0,0.5)',
-              animationDelay: '0.07s',
+              animationDelay: '0s',
             }}
           >
             Strata
           </h1>
+
+          <p className="eg-kicker eg-fade" style={{ margin: '0 0 20px', animationDelay: '0.08s' }}>
+            Explore our beautiful Earth
+          </p>
 
           <div className="eg-fade" style={{ animationDelay: '0.15s' }}>
             <div className="eg-tabs">
@@ -116,22 +115,10 @@ export default function MainMenu({ onPlay }: MainMenuProps) {
           </div>
         </header>
 
-        {/* ── Featured: Urban large + Terra / USA stacked ── */}
-        <div className="eg-feature">
-          <Tile mode={FEATURED[0]} className="eg-lead" delay={0.3} />
-          <Tile mode={FEATURED[1]} delay={0.37} />
-          <Tile mode={FEATURED[2]} delay={0.44} />
-        </div>
-
-        {/* ── The rest — wide editorial cards ── */}
-        <div className="eg-rest">
-          {REST.map((m, i) => (
-            <Tile
-              key={m.key}
-              mode={m}
-              className={i === REST.length - 1 ? 'eg-span2' : ''}
-              delay={0.5 + i * 0.06}
-            />
+        {/* ── One cohesive bento — all modes, aligned to a single grid ── */}
+        <div className="eg-grid">
+          {MODES.map((m, i) => (
+            <Tile key={m.key} mode={m} className={m.cls} delay={0.26 + i * 0.05} />
           ))}
         </div>
 

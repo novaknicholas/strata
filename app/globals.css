@@ -77,29 +77,38 @@ body {
 .eg-tab[disabled] { cursor: default; color: var(--ink-faint); }
 .eg-soon { font-size: 9px; font-weight: 700; letter-spacing: .12em; background: rgba(255,255,255,.12); color: var(--ink-faint); padding: 3px 7px; border-radius: 999px; }
 
-/* ── Editorial photo layout ──────────────────────────────────────────────
-   Featured: Urban large left, Terra + USA stacked right (desktop).
-   Rest: wide cards two-up; the last spans full width. Mobile: all
-   full-width stacked, 16:9. */
-.eg-feature { display: grid; grid-template-columns: 1fr; gap: 16px; }
-.eg-rest    { display: grid; grid-template-columns: 1fr; gap: 16px; margin-top: 16px; }
+/* ── One cohesive bento ───────────────────────────────────────────────────
+   Every tile lives on the SAME grid so all edges line up: 2 columns on
+   mobile, 6 on desktop. Widths zig-zag (4/2, 2/4) to stay organic while
+   staying aligned. Urban (eg-a) is the tall lead. Short rows keep tiles
+   4–5 peeking above the fold on load. */
+.eg-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-auto-rows: 29vw;
+  gap: 12px;
+}
+@media (min-width: 560px) { .eg-grid { grid-auto-rows: 25vw; } }
 @media (min-width: 820px) {
-  .eg-feature { grid-template-columns: 1.35fr 1fr; grid-template-rows: auto auto; }
-  .eg-feature .eg-lead { grid-row: span 2; }
-  .eg-rest    { grid-template-columns: 1fr 1fr; }
-  .eg-rest    .eg-span2 { grid-column: span 2; }
+  .eg-grid { grid-template-columns: repeat(6, 1fr); grid-auto-rows: clamp(138px, 15.5vw, 184px); gap: 16px; }
+}
+
+/* Mobile spans (2-col): Urban a tall lead, Uncharted a full-width accent. */
+.eg-a { grid-column: span 2; grid-row: span 2; }
+.eg-h { grid-column: span 2; }
+@media (min-width: 820px) {
+  .eg-a { grid-column: span 4; grid-row: span 2; }
+  .eg-b, .eg-c, .eg-e, .eg-f, .eg-i { grid-column: span 2; grid-row: span 1; }
+  .eg-d, .eg-g, .eg-h { grid-column: span 4; grid-row: span 1; }
+  .eg-j { grid-column: span 6; }
 }
 
 .eg-tile {
-  position: relative; display: block; width: 100%; overflow: hidden;
-  aspect-ratio: 16 / 9;
+  position: relative; display: block; width: 100%; height: 100%; overflow: hidden;
   border: 1px solid rgba(255,255,255,.08); padding: 0; margin: 0; cursor: pointer; text-align: left;
   border-radius: 14px; background: #0d1017;
   box-shadow: 0 6px 22px rgba(0,0,0,.45);
   -webkit-tap-highlight-color: transparent;
-}
-@media (min-width: 820px) {
-  .eg-feature .eg-lead { aspect-ratio: auto; height: 100%; min-height: 430px; }
 }
 
 .eg-img { position: absolute; inset: 0; background-size: cover; background-position: center; transition: transform .3s ease; }
@@ -125,10 +134,11 @@ body {
   display: block; color: #fff; font-weight: 700; font-size: 22px;
   letter-spacing: -.005em; line-height: 1.05; text-shadow: 0 2px 14px rgba(0,0,0,.8), 0 1px 3px rgba(0,0,0,.6);
 }
-.eg-lead .eg-name { font-size: clamp(28px, 3.4vw, 38px); }
+.eg-a .eg-name { font-size: clamp(26px, 3.2vw, 36px); }
 .eg-desc {
   display: block; margin-top: 4px; font-size: 13px;
   color: rgba(255,255,255,.74); text-shadow: 0 1px 8px rgba(0,0,0,.8);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
 /* Best score — quiet pill at the very bottom */
